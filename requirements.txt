@@ -1,0 +1,11 @@
+numpy
+torch
+TotalSegmentator>=2.0.0
+SimpleITK
+scipy
+scikit-image
+matplotlib
+scikit-learn
+PyYAML
+nibabel
+pandas
