@@ -51,6 +51,20 @@ _STRUCTURE_FILENAMES: dict[str, str] = {
     "Pulmonary_Veins": "Pulmonary Veins",
 }
 
+#: Fallback mapping from internal structure names to TotalSegmentator's
+#: native output filenames (no patient_id prefix, e.g. "heart_atrium_left").
+#: Used to load masks produced by older TS runs that predate the rebuild.
+_TS_NATIVE_FILENAMES: dict[str, str] = {
+    "LA": "heart_atrium_left",
+    "LV": "heart_ventricle_left",
+    "RA": "heart_atrium_right",
+    "RV": "heart_ventricle_right",
+    "Aorta": "aorta",
+    "Pulmonary_Artery": "pulmonary_artery",
+    "Pericardium": "pericardium",
+    "Pulmonary_Veins": "pulmonary_vein",
+}
+
 #: Chamber keys expected by the pericardium resolver.
 _CHAMBER_KEYS: list[str] = ["LA", "LV", "RA", "RV", "Aorta"]
 
@@ -217,11 +231,16 @@ def run_fat_extraction_pipeline(
         ct_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
         ct_direction: np.ndarray = np.eye(3)
 
-        # Check for pre-resampled cache.
+        # Check for pre-resampled cache (try new + old naming).
         resampled_path = os.path.join(
             intermediate_dir,
             _RESAMPLED_CT_FILENAME.format(patient_id=patient_id),
         )
+        if not os.path.isfile(resampled_path):
+            # Fallback: old naming without patient_id prefix
+            legacy_ct_path = os.path.join(intermediate_dir, "ct_resampled.nii.gz")
+            if os.path.isfile(legacy_ct_path):
+                resampled_path = legacy_ct_path
         if os.path.isfile(resampled_path):
             logger.info(
                 "[%s] Step %d/%d: Loading pre-resampled CT from %s",
@@ -705,17 +724,27 @@ def _load_masks(
     """
     masks: dict[str, np.ndarray] = {}
     for internal_key, filename_stem in _STRUCTURE_FILENAMES.items():
-        mask_path = os.path.join(
-            intermediate_dir,
-            f"{patient_id}_{filename_stem}.nii.gz",
-        )
-        if not os.path.isfile(mask_path):
-            # Fallback: try without .gz (e.g. .nii only)
-            mask_path = os.path.join(
-                intermediate_dir,
-                f"{patient_id}_{filename_stem}.nii",
-            )
-        if os.path.isfile(mask_path):
+        # Try in order:
+        #   1. New convention:  <patient_id>_<stem>.nii.gz
+        #   2. New convention:  <patient_id>_<stem>.nii
+        #   3. Old TS native:   <ts_native_name>.nii.gz  (no patient prefix)
+        #   4. Old TS native:   <ts_native_name>.nii
+        candidates: list[str] = [
+            os.path.join(intermediate_dir, f"{patient_id}_{filename_stem}.nii.gz"),
+            os.path.join(intermediate_dir, f"{patient_id}_{filename_stem}.nii"),
+        ]
+        ts_native = _TS_NATIVE_FILENAMES.get(internal_key, "")
+        if ts_native:
+            candidates.append(os.path.join(intermediate_dir, f"{ts_native}.nii.gz"))
+            candidates.append(os.path.join(intermediate_dir, f"{ts_native}.nii"))
+
+        mask_path = ""
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                mask_path = candidate
+                break
+
+        if mask_path:
             try:
                 mask_img = sitk.ReadImage(mask_path)
                 masks[internal_key] = sitk.GetArrayFromImage(mask_img)
