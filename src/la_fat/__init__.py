@@ -1,0 +1,33 @@
+"""LA Fat Segmentation — GPU-accelerated epicardial adipose tissue analysis."""
+
+from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
+from la_fat.config import PipelineConfig
+from la_fat.partition_engine import PartitionResult, partition_fat
+from la_fat.pipeline import PipelineResult, run_fat_extraction_pipeline
+from la_fat.preprocessor import ResampleResult, resample_to_isotropic
+from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
+from la_fat.quality_flagger import QualityFlag, generate_quality_flags
+from la_fat.ts_runner import (
+    TsPrecomputeResult,
+    is_ts_available,
+    run_ts_precompute,
+)
+
+__all__ = [
+    "CleanupResult",
+    "DashboardOutput",
+    "PipelineConfig",
+    "PipelineResult",
+    "PartitionResult",
+    "QualityFlag",
+    "ResampleResult",
+    "TsPrecomputeResult",
+    "cleanup_la_fat_mask",
+    "generate_dashboard",
+    "generate_quality_flags",
+    "is_ts_available",
+    "partition_fat",
+    "resample_to_isotropic",
+    "run_fat_extraction_pipeline",
+    "run_ts_precompute",
+]

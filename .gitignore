@@ -11,3 +11,5 @@ outputs/
 *.nii.gz
 *.dcm
 results.csv
+*.egg-info/
+.scratch/
