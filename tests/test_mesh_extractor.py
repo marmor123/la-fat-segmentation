@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from la_fat.mesh_extractor import extract_meshes_for_step, extract_interactive_meshes
+from la_fat.pipeline_types import PipelineArtifacts
 
 
 # ---------------------------------------------------------------------------
@@ -46,8 +47,8 @@ _CANONICAL_ANCHORS: list[str] = [
 ]
 
 
-def _make_pipeline_state() -> dict:
-    """Build a synthetic pipeline_state dict."""
+def _make_pipeline_state() -> PipelineArtifacts:
+    """Build a synthetic PipelineArtifacts instance."""
     anchor_masks: dict[str, np.ndarray] = {}
     positions = {
         "LA": (12, 16, 16),
@@ -100,13 +101,13 @@ def _make_pipeline_state() -> dict:
         cleaned_mask=la_fat_mask.copy(),
     )
 
-    return {
-        "anchor_masks": anchor_masks,
-        "pericardium_mask": pericardium_mask,
-        "partition_result": partition_result,
-        "cleanup_result": cleanup_result,
-        "spacing": SPACING,
-    }
+    return PipelineArtifacts(
+        anchor_masks=anchor_masks,
+        pericardium_mask=pericardium_mask,
+        partition_result=partition_result,
+        cleanup_result=cleanup_result,
+        spacing=SPACING,
+    )
 
 
 # ===================================================================
