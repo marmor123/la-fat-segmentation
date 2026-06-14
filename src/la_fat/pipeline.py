@@ -646,15 +646,15 @@ def _step_cleanup(state: PipelineState) -> None:
 
 def _step_extract_meshes(state: PipelineState) -> None:
     """Extract interactive meshes (pipeline step 7, non-fatal)."""
-    pipeline_state_dict: dict[str, t.Any] = {
-        "anchor_masks": state.anchor_masks,
-        "pericardium_mask": state.pericardium_result.mask,
-        "partition_result": state.partition_result,
-        "cleanup_result": state.cleanup_result or _empty_cleanup_result(),
-        "spacing": state.spacing,
-    }
+    artifacts = PipelineArtifacts(
+        anchor_masks=state.anchor_masks,
+        pericardium_mask=state.pericardium_result.mask,
+        partition_result=state.partition_result,
+        cleanup_result=state.cleanup_result or _empty_cleanup_result(),
+        spacing=state.spacing,
+    )
     mesh_results = extract_interactive_meshes(
-        pipeline_state_dict, state.patient_output_dir,
+        artifacts, state.patient_output_dir,
     )
     mesh_paths: dict[str, list[str]] = {}
     for step_name, step_meshes in mesh_results.items():
