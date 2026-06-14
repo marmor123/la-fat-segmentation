@@ -19,6 +19,7 @@ from la_fat.quality_flagger import QualityFlag, generate_quality_flags
 from la_fat.ts_runner import (
     TsPrecomputeResult,
     is_ts_available,
+    resolve_ts_mask_path,
     run_ts_precompute,
 )
 
@@ -42,6 +43,7 @@ __all__ = [
     "is_ts_available",
     "partition_fat",
     "resample_to_isotropic",
+    "resolve_ts_mask_path",
     "run_fat_extraction_pipeline",
     "run_ts_precompute",
 ]

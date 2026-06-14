@@ -23,6 +23,7 @@ from la_fat.ts_runner import (
     _resample_mask_to_isotropic,
     extract_patient_id,
     is_ts_available,
+    resolve_ts_mask_path,
     run_ts_precompute,
     TS_STRUCTURE_NAMES,
 )
@@ -490,3 +491,123 @@ class TestRealTsIntegration:
 
         assert result.patient_id == "test_scan"
         assert os.path.isdir(result.output_dir)
+
+
+# =============================================================================
+# resolve_ts_mask_path
+# =============================================================================
+
+
+class TestResolveTsMaskPath:
+    """Path resolution for TS output masks."""
+
+    def _make_v2_mask(self, output_dir: str, patient_id: str, name: str) -> str:
+        """Create a v2-style mask file (with patient_id prefix)."""
+        path = os.path.join(output_dir, f"{patient_id}_{name}.nii.gz")
+        nib.save(
+            nib.Nifti1Image(np.ones((4, 4, 4), dtype=np.uint8), np.eye(4)),
+            path,
+        )
+        return path
+
+    def _make_v1_mask(self, output_dir: str, ts_stem: str) -> str:
+        """Create a v1-style mask file (TS native name, no patient prefix)."""
+        path = os.path.join(output_dir, f"{ts_stem}.nii.gz")
+        nib.save(
+            nib.Nifti1Image(np.ones((4, 4, 4), dtype=np.uint8), np.eye(4)),
+            path,
+        )
+        return path
+
+    def test_v2_naming_found(self, tmp_path):
+        """Resolves v2-style filenames (patient_id + name)."""
+        d = str(tmp_path)
+        self._make_v2_mask(d, "PAT001", "LA")
+        result = resolve_ts_mask_path(d, "PAT001", "LA")
+        assert result is not None
+        assert os.path.isfile(result)
+        assert "PAT001_LA.nii.gz" in result
+
+    def test_v2_naming_with_space(self, tmp_path):
+        """Resolves v2-style with spaces in the name (Pulmonary Artery)."""
+        d = str(tmp_path)
+        self._make_v2_mask(d, "PAT001", "Pulmonary Artery")
+        result = resolve_ts_mask_path(d, "PAT001", "Pulmonary_Artery")
+        assert result is not None
+        assert "Pulmonary Artery" in result
+
+    def test_v1_native_fallback(self, tmp_path):
+        """Falls back to v1 TS native filename."""
+        d = str(tmp_path)
+        self._make_v1_mask(d, "heart_atrium_left")
+        result = resolve_ts_mask_path(d, "PAT001", "LA")
+        assert result is not None
+        assert "heart_atrium_left.nii.gz" in result
+
+    def test_prefers_v2_over_v1(self, tmp_path):
+        """v2 naming is preferred when both exist."""
+        d = str(tmp_path)
+        v2_path = self._make_v2_mask(d, "PAT001", "LA")
+        self._make_v1_mask(d, "heart_atrium_left")
+        result = resolve_ts_mask_path(d, "PAT001", "LA")
+        assert result == v2_path
+
+    def test_returns_none_when_not_found(self, tmp_path):
+        """Returns None when no mask file exists."""
+        d = str(tmp_path)
+        result = resolve_ts_mask_path(d, "PAT001", "LA")
+        assert result is None
+
+    def test_uncompressed_nii_extension(self, tmp_path):
+        """Works with .nii (uncompressed) extension."""
+        d = str(tmp_path)
+        path = os.path.join(d, "PAT001_LA.nii")
+        nib.save(
+            nib.Nifti1Image(np.ones((4, 4, 4), dtype=np.uint8), np.eye(4)),
+            path,
+        )
+        result = resolve_ts_mask_path(d, "PAT001", "LA")
+        assert result is not None
+        assert result.endswith(".nii")
+
+    def test_v1_uncompressed_extension(self, tmp_path):
+        """Works with .nii (uncompressed) extension for v1 native names."""
+        d = str(tmp_path)
+        path = os.path.join(d, "heart_atrium_left.nii")
+        nib.save(
+            nib.Nifti1Image(np.ones((4, 4, 4), dtype=np.uint8), np.eye(4)),
+            path,
+        )
+        result = resolve_ts_mask_path(d, "PAT001", "LA")
+        assert result is not None
+        assert result.endswith(".nii")
+
+    def test_pulmonary_artery_v2(self, tmp_path):
+        """Pulmonary_Artery with underscore maps to v2 name with space."""
+        d = str(tmp_path)
+        self._make_v2_mask(d, "PAT001", "Pulmonary Artery")
+        result = resolve_ts_mask_path(d, "PAT001", "Pulmonary_Artery")
+        assert result is not None
+        assert "Pulmonary Artery" in result
+
+    def test_pulmonary_artery_v1(self, tmp_path):
+        """Pulmonary_Artery falls back to v1 native name."""
+        d = str(tmp_path)
+        self._make_v1_mask(d, "pulmonary_artery")
+        result = resolve_ts_mask_path(d, "PAT001", "Pulmonary_Artery")
+        assert result is not None
+        assert "pulmonary_artery" in result
+
+    def test_pulmonary_veins_v2(self, tmp_path):
+        """Pulmonary_Veins maps to v2 name with space."""
+        d = str(tmp_path)
+        self._make_v2_mask(d, "PAT001", "Pulmonary Veins")
+        result = resolve_ts_mask_path(d, "PAT001", "Pulmonary_Veins")
+        assert result is not None
+
+    def test_pulmonary_veins_v1(self, tmp_path):
+        """Pulmonary_Veins falls back to v1 native name."""
+        d = str(tmp_path)
+        self._make_v1_mask(d, "pulmonary_vein")
+        result = resolve_ts_mask_path(d, "PAT001", "Pulmonary_Veins")
+        assert result is not None

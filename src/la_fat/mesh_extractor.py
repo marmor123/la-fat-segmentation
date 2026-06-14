@@ -10,10 +10,10 @@ import os
 import typing as t
 
 import numpy as np
-import SimpleITK as sitk
 from skimage.measure import marching_cubes
 
 from la_fat.anatomy import CANONICAL_ANCHORS
+from la_fat import nifti_io
 
 __all__ = [
     "extract_meshes_for_step",
@@ -198,24 +198,6 @@ def _save_ply(filepath: str, verts: np.ndarray, faces: np.ndarray) -> None:
         fh.write("\n")
 
 
-def _save_nifti(filepath: str, mask: np.ndarray, spacing: tuple[float, float, float]) -> None:
-    """Save a binary mask as a NIfTI file.
-
-    Parameters
-    ----------
-    filepath:
-        Output path (should end in ``.nii.gz``).
-    mask:
-        Binary mask array.
-    spacing:
-        Voxel spacing ``(sx, sy, sz)`` in mm.
-    """
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    img = sitk.GetImageFromArray(mask.astype(np.uint8))
-    img.SetSpacing((spacing[2], spacing[1], spacing[0]))
-    sitk.WriteImage(img, filepath)
-
-
 def _save_meshes_and_masks(
     meshes: dict[str, tuple[np.ndarray, np.ndarray] | None],
     masks: dict[str, np.ndarray],
@@ -247,4 +229,8 @@ def _save_meshes_and_masks(
         # Always save the mask NIfTI for debugging.
         if name in masks:
             nii_path = os.path.join(output_dir, f"{name}.nii.gz")
-            _save_nifti(nii_path, masks[name], spacing)
+            nifti_io.save_nifti(
+                masks[name].astype(np.uint8),
+                nii_path,
+                spacing=spacing,
+            )
