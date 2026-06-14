@@ -13,6 +13,8 @@ import numpy as np
 import SimpleITK as sitk
 from skimage.measure import marching_cubes
 
+from la_fat.pipeline_types import PipelineArtifacts
+
 __all__ = [
     "extract_meshes_for_step",
     "extract_interactive_meshes",
@@ -80,7 +82,7 @@ def extract_meshes_for_step(
 
 
 def extract_interactive_meshes(
-    pipeline_state: dict[str, t.Any],
+    artifacts: PipelineArtifacts,
     output_dir: str,
 ) -> dict[str, dict[str, tuple[np.ndarray, np.ndarray] | None]]:
     """Orchestrate mesh extraction for all three Dashboard Steps.
@@ -92,17 +94,9 @@ def extract_interactive_meshes(
 
     Parameters
     ----------
-    pipeline_state:
-        Dict containing:
-
-        - ``anchor_masks``: ``{anchor_name: binary_mask}`` for LA, LV, RA,
-          RV, Aorta, Pulmonary_Artery
-        - ``pericardium_mask``: binary mask array
-        - ``partition_result``: object with ``anchor_assignments`` (int
-          array), ``all_fat_mask`` (bool array)
-        - ``cleanup_result``: object with ``cleaned_mask`` (the final LA
-          fat mask)
-        - ``spacing``: tuple ``(sx, sy, sz)``
+    artifacts:
+        Typed container with ``anchor_masks``, ``pericardium_mask``,
+        ``partition_result``, ``cleanup_result``, and ``spacing`` fields.
     output_dir:
         Root output directory; meshes are written to
         ``output_dir/meshes/<step_name>/``.
@@ -112,11 +106,11 @@ def extract_interactive_meshes(
     dict[str, dict[str, tuple[np.ndarray, np.ndarray] | None]]
         Nested dict keyed by step name, then surface name.
     """
-    anchor_masks: dict[str, np.ndarray] = pipeline_state["anchor_masks"]
-    pericardium_mask: np.ndarray = pipeline_state["pericardium_mask"]
-    partition_result = pipeline_state["partition_result"]
-    cleanup_result = pipeline_state["cleanup_result"]
-    spacing: tuple[float, float, float] = pipeline_state["spacing"]
+    anchor_masks: dict[str, np.ndarray] = artifacts.anchor_masks
+    pericardium_mask: np.ndarray = artifacts.pericardium_mask
+    partition_result = artifacts.partition_result
+    cleanup_result = artifacts.cleanup_result
+    spacing: tuple[float, float, float] = artifacts.spacing
 
     results: dict[str, dict[str, tuple[np.ndarray, np.ndarray] | None]] = {}
 

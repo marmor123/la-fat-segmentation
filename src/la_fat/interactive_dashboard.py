@@ -12,6 +12,8 @@ import json
 import os
 import typing as t
 
+from la_fat.pipeline_types import SurfaceSpec, ViewportPreset
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -328,8 +330,8 @@ def _build_step_viewport(
     patient_dir: str,
     step_name: str,
     step_display_name: str,
-    surface_specs: dict[str, dict[str, t.Any]],
-    presets: list[dict[str, t.Any]] | None = None,
+    surface_specs: dict[str, SurfaceSpec],
+    presets: list[ViewportPreset] | None = None,
     on_pane_created: t.Callable[[t.Any], None] | None = None,
 ) -> pn.Column:  # type: ignore[return-value]
     """Build a 3D viewport for a pipeline step.
@@ -347,13 +349,12 @@ def _build_step_viewport(
     step_display_name:
         Heading shown in the card header.
     surface_specs:
-        Mapping of surface name to ``{"color", "opacity", "label",
-        "show_edges" (optional), "style" (optional)}``.
+        Mapping of surface name to ``SurfaceSpec`` with ``color``, ``opacity``,
+        ``label``, ``show_edges``, and ``style``.
     presets:
-        List of preset button specs.  Each spec has ``"name"``, ``"label"``,
-        ``"button_type"``, and either ``"hide"`` (list of names to hide) or
-        ``"show_only"`` (list of names to show).  ``"Show All"`` and
-        ``"Hide All"`` are built-in.
+        List of ``ViewportPreset`` instances.  Each preset has ``name``,
+        ``label``, ``button_type``, and either ``hide`` or ``show_only``.
+        ``"Show All"`` and ``"Hide All"`` are built-in.
     on_pane_created:
         Optional callback invoked with the VTK pane each time it is created
         (used for camera sync registration).
@@ -396,7 +397,7 @@ def _build_step_viewport(
     for name in surface_specs:
         available = name in loaded_meshes
         cb = pn.widgets.Checkbox(  # type: ignore[call-overload]
-            name=surface_specs[name]["label"],
+            name=surface_specs[name].label,
             value=available,
             disabled=not available,
         )
@@ -409,14 +410,14 @@ def _build_step_viewport(
     if presets:
         for preset in presets:
             btn = pn.widgets.Button(  # type: ignore[call-overload]
-                name=preset["label"],
-                button_type=preset.get("button_type", "default"),
+                name=preset.label,
+                button_type=preset.button_type,
                 width=100,
             )
 
-            preset_name = preset["name"]
-            hide_list = preset.get("hide")
-            show_only_list = preset.get("show_only")
+            preset_name = preset.name
+            hide_list = preset.hide
+            show_only_list = preset.show_only
 
             if hide_list is not None:
                 hidden = set(hide_list)
@@ -470,10 +471,10 @@ def _build_step_viewport(
                 mesh = loaded_meshes[name]
                 plotter.add_mesh(
                     mesh,
-                    color=config["color"],
-                    opacity=config["opacity"],
-                    show_edges=config.get("show_edges", False),
-                    style=config.get("style", "surface"),
+                    color=config.color,
+                    opacity=config.opacity,
+                    show_edges=config.show_edges,
+                    style=config.style,
                     name=name,
                 )
         plotter.camera_position = "xy"
@@ -493,7 +494,7 @@ def _build_step_viewport(
     # ---- Checkbox rows with colored dots ----------------------------------
     checkbox_rows: list[pn.Row] = []
     for name, cb in checkboxes.items():
-        r, g, b = surface_specs[name]["color"]
+        r, g, b = surface_specs[name].color
         hex_color = f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
         dot = pn.pane.HTML(
             f'<span style="display:inline-block;width:10px;height:10px;'
@@ -569,36 +570,36 @@ def _build_step2_viewport(patient_dir: str) -> pn.Column:  # type: ignore[return
 
     from la_fat.qa_dashboard import ANCHOR_COLORS, PERICARDIUM_COLOR
 
-    surface_specs: dict[str, dict[str, t.Any]] = {}
+    surface_specs: dict[str, SurfaceSpec] = {}
     for name, color in ANCHOR_COLORS.items():
-        surface_specs[name] = {
-            "color": color,
-            "opacity": 0.5,
-            "label": name,
-        }
-    surface_specs["Pericardium"] = {
-        "color": PERICARDIUM_COLOR,
-        "opacity": 0.1,
-        "label": "Pericardium",
-        "show_edges": True,
-        "style": "wireframe",
-    }
+        surface_specs[name] = SurfaceSpec(
+            color=color,
+            opacity=0.5,
+            label=name,
+        )
+    surface_specs["Pericardium"] = SurfaceSpec(
+        color=PERICARDIUM_COLOR,
+        opacity=0.1,
+        label="Pericardium",
+        show_edges=True,
+        style="wireframe",
+    )
 
-    presets: list[dict[str, t.Any]] = [
-        {"name": "Show All", "label": "Show All", "button_type": "primary"},
-        {"name": "Hide All", "label": "Hide All", "button_type": "warning"},
-        {
-            "name": "Anchors Only",
-            "label": "Anchors Only",
-            "button_type": "default",
-            "hide": ["Pericardium"],
-        },
-        {
-            "name": "Pericardium Only",
-            "label": "Pericardium Only",
-            "button_type": "default",
-            "show_only": ["Pericardium"],
-        },
+    presets: list[ViewportPreset] = [
+        ViewportPreset(name="Show All", label="Show All", button_type="primary"),
+        ViewportPreset(name="Hide All", label="Hide All", button_type="warning"),
+        ViewportPreset(
+            name="Anchors Only",
+            label="Anchors Only",
+            button_type="default",
+            hide=["Pericardium"],
+        ),
+        ViewportPreset(
+            name="Pericardium Only",
+            label="Pericardium Only",
+            button_type="default",
+            show_only=["Pericardium"],
+        ),
     ]
 
     return _build_step_viewport(
@@ -639,36 +640,36 @@ def _build_step5_viewport(patient_dir: str) -> pn.Column:  # type: ignore[return
 
     from la_fat.qa_dashboard import ANCHOR_COLORS, PERICARDIUM_COLOR
 
-    surface_specs: dict[str, dict[str, t.Any]] = {}
+    surface_specs: dict[str, SurfaceSpec] = {}
     for name, color in ANCHOR_COLORS.items():
-        surface_specs[name] = {
-            "color": color,
-            "opacity": 0.7,
-            "label": f"{name} Fat",
-        }
-    surface_specs["Pericardium"] = {
-        "color": PERICARDIUM_COLOR,
-        "opacity": 0.1,
-        "label": "Pericardium",
-        "show_edges": True,
-        "style": "wireframe",
-    }
+        surface_specs[name] = SurfaceSpec(
+            color=color,
+            opacity=0.7,
+            label=f"{name} Fat",
+        )
+    surface_specs["Pericardium"] = SurfaceSpec(
+        color=PERICARDIUM_COLOR,
+        opacity=0.1,
+        label="Pericardium",
+        show_edges=True,
+        style="wireframe",
+    )
 
-    presets: list[dict[str, t.Any]] = [
-        {"name": "Show All", "label": "Show All", "button_type": "primary"},
-        {"name": "Hide All", "label": "Hide All", "button_type": "warning"},
-        {
-            "name": "Fat Only",
-            "label": "Fat Only",
-            "button_type": "default",
-            "hide": ["Pericardium"],
-        },
-        {
-            "name": "Pericardium Only",
-            "label": "Pericardium Only",
-            "button_type": "default",
-            "show_only": ["Pericardium"],
-        },
+    presets: list[ViewportPreset] = [
+        ViewportPreset(name="Show All", label="Show All", button_type="primary"),
+        ViewportPreset(name="Hide All", label="Hide All", button_type="warning"),
+        ViewportPreset(
+            name="Fat Only",
+            label="Fat Only",
+            button_type="default",
+            hide=["Pericardium"],
+        ),
+        ViewportPreset(
+            name="Pericardium Only",
+            label="Pericardium Only",
+            button_type="default",
+            show_only=["Pericardium"],
+        ),
     ]
 
     return _build_step_viewport(
@@ -713,27 +714,27 @@ def _build_step7_viewport(patient_dir: str) -> pn.Column:  # type: ignore[return
 
     from la_fat.qa_dashboard import ANCHOR_COLORS, LA_FAT_COLOR_3D, PERICARDIUM_COLOR
 
-    surface_specs: dict[str, dict[str, t.Any]] = {
-        "LA_chamber": {
-            "color": ANCHOR_COLORS["LA"],
-            "opacity": 0.5,
-            "label": "LA Chamber",
-        },
-        "Pericardium": {
-            "color": PERICARDIUM_COLOR,
-            "opacity": 0.1,
-            "label": "Pericardium",
-        },
-        "LA_fat": {
-            "color": LA_FAT_COLOR_3D,
-            "opacity": 0.85,
-            "label": "LA Fat",
-        },
+    surface_specs: dict[str, SurfaceSpec] = {
+        "LA_chamber": SurfaceSpec(
+            color=ANCHOR_COLORS["LA"],
+            opacity=0.5,
+            label="LA Chamber",
+        ),
+        "Pericardium": SurfaceSpec(
+            color=PERICARDIUM_COLOR,
+            opacity=0.1,
+            label="Pericardium",
+        ),
+        "LA_fat": SurfaceSpec(
+            color=LA_FAT_COLOR_3D,
+            opacity=0.85,
+            label="LA Fat",
+        ),
     }
 
-    presets: list[dict[str, t.Any]] = [
-        {"name": "Show All", "label": "Show All", "button_type": "primary"},
-        {"name": "Hide All", "label": "Hide All", "button_type": "warning"},
+    presets: list[ViewportPreset] = [
+        ViewportPreset(name="Show All", label="Show All", button_type="primary"),
+        ViewportPreset(name="Hide All", label="Hide All", button_type="warning"),
     ]
 
     result = _build_step_viewport(

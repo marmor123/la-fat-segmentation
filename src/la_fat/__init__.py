@@ -13,6 +13,7 @@ from la_fat.mesh_extractor import (
 )
 from la_fat.partition_engine import PartitionResult, partition_fat
 from la_fat.pipeline import PipelineResult, run_fat_extraction_pipeline
+from la_fat.pipeline_types import PipelineArtifacts, SurfaceSpec, ViewportPreset
 from la_fat.preprocessor import ResampleResult, resample_to_isotropic
 from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
 from la_fat.quality_flagger import QualityFlag, generate_quality_flags
@@ -26,12 +27,15 @@ __all__ = [
     "CleanupResult",
     "DashboardOutput",
     "PatientSummary",
+    "PipelineArtifacts",
     "PipelineConfig",
     "PipelineResult",
     "PartitionResult",
     "QualityFlag",
     "ResampleResult",
+    "SurfaceSpec",
     "TsPrecomputeResult",
+    "ViewportPreset",
     "cleanup_la_fat_mask",
     "create_dashboard",
     "discover_patients",

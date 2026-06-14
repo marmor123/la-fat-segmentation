@@ -19,6 +19,7 @@ from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
 from la_fat.config import PipelineConfig
 from la_fat.fat_thresholder import FatThresholdResult, compute_fat_threshold
 from la_fat.mesh_extractor import extract_interactive_meshes
+from la_fat.pipeline_types import PipelineArtifacts
 from la_fat.partition_engine import PartitionResult, partition_fat
 from la_fat.pericardium_resolver import PericardiumResult, resolve_pericardium
 from la_fat.preprocessor import ResampleResult, resample_to_isotropic
@@ -497,15 +498,15 @@ def run_fat_extraction_pipeline(
         )
 
         try:
-            pipeline_state_dict: dict[str, t.Any] = {
-                "anchor_masks": anchor_masks,
-                "pericardium_mask": pericardium_result.mask,
-                "partition_result": partition_result,
-                "cleanup_result": cleanup_result or _empty_cleanup_result(),
-                "spacing": spacing,
-            }
+            pipeline_artifacts = PipelineArtifacts(
+                anchor_masks=anchor_masks,
+                pericardium_mask=pericardium_result.mask,
+                partition_result=partition_result,
+                cleanup_result=cleanup_result or _empty_cleanup_result(),
+                spacing=spacing,
+            )
             mesh_results = extract_interactive_meshes(
-                pipeline_state_dict, patient_output_dir,
+                pipeline_artifacts, patient_output_dir,
             )
             mesh_paths = {}
             for step_name, step_meshes in mesh_results.items():
