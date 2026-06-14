@@ -18,6 +18,7 @@ from la_fat.interactive_dashboard import (
     _build_step7_viewport,
     discover_patients,
 )
+from la_fat.pipeline_result import PipelineResultData, save_pipeline_result
 
 
 # ---------------------------------------------------------------------------
@@ -91,17 +92,32 @@ class TestDiscoverPatientsPartial:
 
 
 class TestDiscoverPatientsQualityFlags:
-    """Correctly determining severity from quality_flags.json."""
+    """Correctly determining severity from quality flags."""
 
     def _make_patient_with_flags(
         self, root: Path, patient_id: str, flags: list[dict]
     ) -> None:
-        """Create a fake patient directory with quality_flags.json."""
+        """Create a fake patient directory with PipelineResultData (quality flags)."""
         patient_dir = root / patient_id
         patient_dir.mkdir(parents=True, exist_ok=True)
-        flags_path = patient_dir / "quality_flags.json"
-        with open(flags_path, "w", encoding="utf-8") as f:
-            json.dump(flags, f)
+        result = PipelineResultData(
+            patient_id=patient_id,
+            la_fat_volume_ml=10.0,
+            total_fat_volume_ml=50.0,
+            pericardium_volume_ml=200.0,
+            unassigned_volume_ml=2.0,
+            unassigned_fat_pct=4.0,
+            anchor_volumes_ml={"LA": 10.0, "LV": 15.0, "RA": 8.0, "RV": 10.0, "Aorta": 5.0, "Pulmonary_Artery": 2.0},
+            quality_flags=flags,
+            fat_hu_range=(-190.0, -30.0),
+            voxel_volume_ml=0.003375,
+            excluded_anchors=[],
+            islands_removed=0,
+            total_removed_volume_mm3=0.0,
+            warnings=[],
+            errors=[],
+        )
+        save_pipeline_result(result, str(patient_dir))
 
     def test_discover_patients_reads_quality_flags_severity(self, tmp_path):
         """Highest severity from quality_flags.json is reflected in summary."""

@@ -148,7 +148,7 @@ def generate_dashboard(
     # ---- Component 3: Numeric Summary ----------------------------------------
     summary_path = os.path.join(output_dir, "summary.txt")
     csv_path = os.path.join(output_dir, "summary.csv")
-    _build_numeric_summary(
+    summary_text = _build_numeric_summary(
         patient_id=patient_id,
         fat_threshold_result=fat_threshold_result,
         pericardium_result=pericardium_result,
@@ -166,7 +166,7 @@ def generate_dashboard(
         patient_id=patient_id,
         gallery_rel=os.path.basename(gallery_path),
         fat_overlay_rel=os.path.basename(fat_overlay_path),
-        summary_path=summary_path,
+        summary_text=summary_text,
         save_path=combined_path,
     )
 
@@ -379,13 +379,21 @@ def _build_numeric_summary(
     summary_path: str,
     csv_path: str,
     spacing: tuple[float, float, float],
-) -> None:
-    """Write a human-readable TXT summary and a machine-readable CSV."""
+) -> str:
+    """Write a human-readable TXT summary and a machine-readable CSV.
+
+    Uses ``pericardium_result.volume_ml`` (precomputed by the pericardium
+    resolver) instead of re-computing from the mask.
+
+    Returns the summary text as a string.
+    """
 
     voxel_volume_ml = spacing[0] * spacing[1] * spacing[2] / 1000.0
-    pericardium_volume_ml = (
-        np.count_nonzero(pericardium_result.mask) * voxel_volume_ml
-    )
+    pericardium_volume_ml = pericardium_result.volume_ml
+    if pericardium_volume_ml <= 0.0:
+        pericardium_volume_ml = (
+            np.count_nonzero(pericardium_result.mask) * voxel_volume_ml
+        )
 
     total = max(partition_result.total_fat_volume_ml, 0.001)
     unassigned_pct = (
@@ -582,6 +590,9 @@ def _build_numeric_summary(
         writer = csv.writer(f)
         writer.writerows(csv_rows)
 
+    summary_text = "\n".join(lines)
+    return summary_text
+
 
 # ---- Component 4: Combined HTML ----------------------------------------
 
@@ -590,20 +601,18 @@ def _build_combined_html(
     patient_id: str,
     gallery_rel: str,
     fat_overlay_rel: str,
-    summary_path: str,
+    summary_text: str,
     save_path: str,
 ) -> None:
     """Write a self-contained combined dashboard HTML page.
 
     All image references are relative paths -- the page is meant to be
     viewed from the dashboard output directory.
+
+    *summary_text* is embedded directly into a ``<pre>`` block -- no
+    file I/O needed.
     """
-    # Read the summary text for embedding into a <pre> block.
-    try:
-        with open(summary_path, encoding="utf-8") as f:
-            summary_text = f.read()
-    except Exception:
-        summary_text = "(summary not available)"
+    _summary = summary_text or "(summary not available)"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -644,7 +653,7 @@ def _build_combined_html(
 
 <div class="section">
   <h2>3. Numeric Summary</h2>
-  <pre>{summary_text}</pre>
+  <pre>{_summary}</pre>
 </div>
 
 <div class="footer">

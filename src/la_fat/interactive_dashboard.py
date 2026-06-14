@@ -12,6 +12,16 @@ import json
 import os
 import typing as t
 
+from la_fat.pipeline_result import load_pipeline_result
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: Severity ordering for computing highest severity from a list of flags.
+_SEVERITY_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
+
 
 # ---------------------------------------------------------------------------
 # Public types
@@ -30,20 +40,18 @@ class PatientSummary:
         ISO-formatted timestamp of the most recent file modification time
         in the patient directory, or ``""`` if the directory is empty.
     severity:
-        Highest flag severity from ``quality_flags.json``:
+        Highest flag severity from quality flags:
         ``"high"`` / ``"medium"`` / ``"low"`` / ``"none"``.
     status:
         ``"complete"`` if ``meshes/step7_final/LA_fat.ply`` exists,
         otherwise ``"partial"``.
     la_fat_volume_ml:
-        LA fat volume from ``summary.csv`` (row with Category ``"LA Fat"``,
-        Key ``"volume_ml"``), or ``None`` if unavailable.
+        LA fat volume from PipelineResultData, or ``None`` if unavailable.
     total_epicardial_volume_ml:
-        Total epicardial fat volume from ``summary.csv``, computed as the
-        sum of all per-anchor volumes plus unassigned fat, or ``None`` if
+        Total epicardial fat volume from PipelineResultData, or ``None`` if
         unavailable.
     quality_flags:
-        Parsed quality flags from ``quality_flags.json``, or empty list.
+        Parsed quality flags from PipelineResultData, or empty list.
     """
 
     patient_id: str
@@ -98,11 +106,28 @@ def discover_patients(output_dir: str) -> list[PatientSummary]:
         # Compute processing_date from most recent mtime
         processing_date = _get_latest_mtime(patient_dir)
 
-        # Read quality_flags.json
-        quality_flags, severity = _load_quality_flags(patient_dir)
+        # Load PipelineResultData for typed access to quality flags, volumes, etc.
+        # If pipeline_result.json is not available, fall back gracefully with
+        # None/empty defaults so old output directories still appear in the list.
+        try:
+            result_data = load_pipeline_result(patient_dir)
+            quality_flags = result_data.quality_flags
+            la_vol = result_data.la_fat_volume_ml
+            total_epi_vol = result_data.total_fat_volume_ml
+        except (FileNotFoundError, ValueError):
+            quality_flags = []
+            la_vol = None
+            total_epi_vol = None
 
-        # Read summary.csv
-        la_vol, total_epi_vol = _load_summary(patient_dir)
+        # Compute highest severity from quality flags
+        severity = "none"
+        for flag in quality_flags:
+            sev = flag.get("severity", "none")
+            if sev in _SEVERITY_ORDER and (
+                severity == "none"
+                or _SEVERITY_ORDER.get(sev, 99) < _SEVERITY_ORDER.get(severity, 99)
+            ):
+                severity = sev
 
         patients.append(
             PatientSummary(
@@ -110,8 +135,8 @@ def discover_patients(output_dir: str) -> list[PatientSummary]:
                 processing_date=processing_date,
                 severity=severity,
                 status=status,
-                la_fat_volume_ml=la_vol,
-                total_epicardial_volume_ml=total_epi_vol,
+                la_fat_volume_ml=la_vol if la_vol is not None else None,
+                total_epicardial_volume_ml=total_epi_vol if total_epi_vol is not None else None,
                 quality_flags=quality_flags,
             )
         )
@@ -149,106 +174,6 @@ def _get_latest_mtime(directory: str) -> str:
     from datetime import datetime, timezone
 
     return datetime.fromtimestamp(latest, tz=timezone.utc).isoformat()
-
-
-def _load_quality_flags(
-    patient_dir: str,
-) -> tuple[list[dict[str, t.Any]], str]:
-    """Load and parse ``quality_flags.json`` from *patient_dir*.
-
-    Returns ``(flags_list, severity)`` where *severity* is the highest
-    severity found (``"high"`` > ``"medium"`` > ``"low"`` > ``"none"``).
-    """
-    flags_path = os.path.join(patient_dir, "quality_flags.json")
-    if not os.path.isfile(flags_path):
-        return [], "none"
-
-    try:
-        with open(flags_path, encoding="utf-8") as f:
-            flags: list[dict[str, t.Any]] = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return [], "none"
-
-    severity_order = {"high": 0, "medium": 1, "low": 2}
-    severity = "none"
-    for flag in flags:
-        sev = flag.get("severity", "none")
-        if sev in severity_order and (
-            severity == "none"
-            or severity_order.get(sev, 99) < severity_order.get(severity, 99)
-        ):
-            severity = sev
-
-    return flags, severity
-
-
-def _load_summary(
-    patient_dir: str,
-) -> tuple[float | None, float | None]:
-    """Read LA fat volume and total epicardial fat volume from ``summary.csv``.
-
-    LA fat volume comes from the row ``LA Fat,volume_ml,<value>``.
-    Total epicardial fat volume is computed as the sum of all per-anchor
-    ``volume_ml`` values plus the unassigned fat volume.
-
-    Returns ``(la_fat_volume_ml, total_epicardial_volume_ml)``, each
-    ``None`` if unavailable.
-    """
-    csv_path = os.path.join(patient_dir, "summary.csv")
-    if not os.path.isfile(csv_path):
-        return None, None
-
-    import csv as csv_module
-
-    la_vol: float | None = None
-    total_epi_vol: float | None = None
-    sum_volumes: float = 0.0
-    found_any: bool = False
-
-    try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            reader = csv_module.reader(f)
-            for row in reader:
-                if len(row) < 3:
-                    continue
-                category, key, value = row[0], row[1], row[2]
-
-                # LA fat volume
-                if category == "LA Fat" and key == "volume_ml":
-                    try:
-                        la_vol = float(value)
-                    except ValueError:
-                        pass
-
-                # Per-anchor volumes (LA, LV, RA, RV, Aorta, Pulmonary_Artery)
-                if key == "volume_ml" and category in (
-                    "LA",
-                    "LV",
-                    "RA",
-                    "RV",
-                    "Aorta",
-                    "Pulmonary_Artery",
-                ):
-                    try:
-                        sum_volumes += float(value)
-                        found_any = True
-                    except ValueError:
-                        pass
-
-                # Unassigned fat volume
-                if category == "Unassigned Fat" and key == "volume_ml":
-                    try:
-                        sum_volumes += float(value)
-                        found_any = True
-                    except ValueError:
-                        pass
-    except OSError:
-        return None, None
-
-    if found_any:
-        total_epi_vol = sum_volumes
-
-    return la_vol, total_epi_vol
 
 
 # ---------------------------------------------------------------------------
