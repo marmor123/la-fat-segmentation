@@ -142,6 +142,67 @@ def is_ts_available() -> bool:
         return False
 
 
+def resolve_ts_mask_path(
+    ts_output_dir: str,
+    patient_id: str,
+    structure_name: str,
+) -> str | None:
+    """Resolve a TS output mask path, trying both v2 and v1 native filenames.
+
+    Given a pipeline-internal structure name (e.g. ``"LA"``,
+    ``"Pulmonary_Artery"``), this function looks for the corresponding NIfTI
+    mask in *ts_output_dir* using two naming conventions:
+
+    1. **v2** (preferred): ``{patient_id}_{name}.nii.gz`` — the convention
+       used by the current TS Pre-Compute runner.
+    2. **v1** (fallback): ``{ts_native_stem}.nii.gz`` — the native filenames
+       produced by older TS runs (no patient_id prefix).
+
+    Both ``.nii.gz`` and ``.nii`` extensions are tried for each convention.
+
+    Parameters
+    ----------
+    ts_output_dir:
+        Directory containing TS output mask files.
+    patient_id:
+        Patient identifier used in v2 filenames.
+    structure_name:
+        Pipeline internal structure name.  Use underscores for multi-word
+        names (e.g. ``"Pulmonary_Artery"``); the function maps them to the
+        TS convention (``"Pulmonary Artery"``) automatically.
+
+    Returns
+    -------
+    str or None
+        Absolute path to the mask file if found, or ``None`` if no matching
+        file exists.
+    """
+    # Map pipeline internal names (underscore) → TS convention (space).
+    # This is needed because TS_STRUCTURE_NAMES uses "Pulmonary Artery"
+    # (with space) as keys, while the pipeline uses "Pulmonary_Artery".
+    _PIPELINE_TO_TS_NAME: dict[str, str] = {
+        "Pulmonary_Artery": "Pulmonary Artery",
+        "Pulmonary_Veins": "Pulmonary Veins",
+    }
+    ts_name = _PIPELINE_TO_TS_NAME.get(structure_name, structure_name)
+
+    # ── v2 naming:  {patient_id}_{name}.nii.gz / .nii ───────────────
+    for ext in (".nii.gz", ".nii"):
+        path = os.path.join(ts_output_dir, f"{patient_id}_{ts_name}{ext}")
+        if os.path.isfile(path):
+            return path
+
+    # ── v1 native naming:  {ts_stem}.nii.gz / .nii ──────────────────
+    native_stem = TS_STRUCTURE_NAMES.get(ts_name)
+    if native_stem:
+        for ext in (".nii.gz", ".nii"):
+            path = os.path.join(ts_output_dir, f"{native_stem}{ext}")
+            if os.path.isfile(path):
+                return path
+
+    return None
+
+
 # ── Internal helpers ────────────────────────────────────────────────────────
 
 

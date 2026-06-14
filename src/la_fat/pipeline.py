@@ -15,6 +15,7 @@ import typing as t
 import numpy as np
 import SimpleITK as sitk
 
+from la_fat import nifti_io
 from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
 from la_fat.config import PipelineConfig
 from la_fat.fat_thresholder import FatThresholdResult, compute_fat_threshold
@@ -24,6 +25,7 @@ from la_fat.pericardium_resolver import PericardiumResult, resolve_pericardium
 from la_fat.preprocessor import ResampleResult, resample_to_isotropic
 from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
 from la_fat.quality_flagger import QualityFlag, generate_quality_flags
+from la_fat.ts_runner import resolve_ts_mask_path
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -48,20 +50,6 @@ _STRUCTURE_FILENAMES: dict[str, str] = {
     "Pulmonary_Artery": "Pulmonary Artery",
     "Pericardium": "Pericardium",
     "Pulmonary_Veins": "Pulmonary Veins",
-}
-
-#: Fallback mapping from internal structure names to TotalSegmentator's
-#: native output filenames (no patient_id prefix, e.g. "heart_atrium_left").
-#: Used to load masks produced by older TS runs that predate the rebuild.
-_TS_NATIVE_FILENAMES: dict[str, str] = {
-    "LA": "heart_atrium_left",
-    "LV": "heart_ventricle_left",
-    "RA": "heart_atrium_right",
-    "RV": "heart_ventricle_right",
-    "Aorta": "aorta",
-    "Pulmonary_Artery": "pulmonary_artery",
-    "Pericardium": "pericardium",
-    "Pulmonary_Veins": "pulmonary_vein",
 }
 
 #: Chamber keys expected by the pericardium resolver.
@@ -281,7 +269,7 @@ def run_fat_extraction_pipeline(
 
             # Cache resampled CT for future runs.
             os.makedirs(os.path.dirname(resampled_path), exist_ok=True)
-            _save_nifti(
+            nifti_io.save_nifti(
                 ct_array,
                 resampled_path,
                 spacing=ct_spacing,
@@ -604,7 +592,7 @@ def run_fat_extraction_pipeline(
         if cleanup_result is not None:
             try:
                 os.makedirs(patient_output_dir, exist_ok=True)
-                _save_nifti(
+                nifti_io.save_nifti(
                     cleanup_result.cleaned_mask.astype(np.uint8),
                     la_fat_mask_path,
                     spacing=ct_spacing,
@@ -774,33 +762,18 @@ def _load_masks(
     """Load TS masks from disk into a ``{name: array}`` dictionary.
 
     Only structures whose mask file exists on disk are included.
+    Resolution of v2 and v1 native filenames is delegated to
+    :func:`la_fat.ts_runner.resolve_ts_mask_path`.
     """
     masks: dict[str, np.ndarray] = {}
-    for internal_key, filename_stem in _STRUCTURE_FILENAMES.items():
-        # Try in order:
-        #   1. New convention:  <patient_id>_<stem>.nii.gz
-        #   2. New convention:  <patient_id>_<stem>.nii
-        #   3. Old TS native:   <ts_native_name>.nii.gz  (no patient prefix)
-        #   4. Old TS native:   <ts_native_name>.nii
-        candidates: list[str] = [
-            os.path.join(intermediate_dir, f"{patient_id}_{filename_stem}.nii.gz"),
-            os.path.join(intermediate_dir, f"{patient_id}_{filename_stem}.nii"),
-        ]
-        ts_native = _TS_NATIVE_FILENAMES.get(internal_key, "")
-        if ts_native:
-            candidates.append(os.path.join(intermediate_dir, f"{ts_native}.nii.gz"))
-            candidates.append(os.path.join(intermediate_dir, f"{ts_native}.nii"))
-
-        mask_path = ""
-        for candidate in candidates:
-            if os.path.isfile(candidate):
-                mask_path = candidate
-                break
-
+    for internal_key in _STRUCTURE_FILENAMES:
+        mask_path = resolve_ts_mask_path(
+            intermediate_dir, patient_id, internal_key,
+        )
         if mask_path:
             try:
-                mask_img = sitk.ReadImage(mask_path)
-                masks[internal_key] = sitk.GetArrayFromImage(mask_img)
+                array, _ = nifti_io.load_nifti(mask_path)
+                masks[internal_key] = array
                 logger.debug("Loaded mask %s (%s)", internal_key, mask_path)
             except Exception as exc:
                 logger.warning(
@@ -809,21 +782,6 @@ def _load_masks(
                 )
     return masks
 
-
-def _save_nifti(
-    array: np.ndarray,
-    path: str,
-    spacing: tuple[float, float, float],
-    origin: tuple[float, float, float],
-    direction: np.ndarray,
-) -> None:
-    """Save a numpy array as a NIfTI file with the given spatial metadata."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    img = sitk.GetImageFromArray(array)
-    img.SetSpacing(spacing)
-    img.SetOrigin(origin)
-    img.SetDirection(direction.ravel().tolist())
-    sitk.WriteImage(img, path)
 
 
 def _save_quality_flags_json(
