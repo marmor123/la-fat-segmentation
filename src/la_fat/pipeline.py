@@ -15,7 +15,7 @@ import typing as t
 import numpy as np
 import SimpleITK as sitk
 
-from la_fat.anatomy import CANONICAL_ANCHORS
+from la_fat.anatomy import CANONICAL_ANCHORS, voxel_volume_ml
 from la_fat import nifti_io
 from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
 from la_fat.config import PipelineConfig
@@ -26,6 +26,7 @@ from la_fat.partition_engine import PartitionResult, partition_fat
 from la_fat.pericardium_resolver import PericardiumResult, resolve_pericardium
 from la_fat.preprocessor import ResampleResult, resample_to_isotropic
 from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
+from la_fat.pipeline_result import PipelineResultData, save_pipeline_result
 from la_fat.quality_flagger import QualityFlag, generate_quality_flags
 from la_fat.ts_runner import resolve_ts_mask_path
 
@@ -173,7 +174,7 @@ def run_fat_extraction_pipeline(
     mesh_paths: dict[str, list[str]] | None = None
 
     # ── Step 0: Configuration ───────────────────────────────────────────────
-    step_total = 12
+    step_total = 13
     step = 0
 
     try:
@@ -642,6 +643,72 @@ def run_fat_extraction_pipeline(
 
     success = len(errors) == 0
     total_runtime = time.perf_counter() - start_time
+
+    # ── Step 12: Save PipelineResultData (single-source-of-truth for dashboards)
+    voxel_vol = voxel_volume_ml(spacing)
+    total_fat = (
+        partition_result.total_fat_volume_ml if partition_result is not None else 0.0
+    )
+    unassigned_vol = (
+        partition_result.unassigned_volume_ml if partition_result is not None else 0.0
+    )
+    unassigned_pct = (
+        (unassigned_vol / total_fat * 100.0) if total_fat > 0.001 else 0.0
+    )
+
+    pipeline_result_data = PipelineResultData(
+        patient_id=patient_id,
+        la_fat_volume_ml=(
+            partition_result.anchor_volumes_ml.get("LA", 0.0)
+            if partition_result is not None
+            else 0.0
+        ),
+        total_fat_volume_ml=total_fat,
+        pericardium_volume_ml=(
+            pericardium_result.volume_ml if pericardium_result is not None else 0.0
+        ),
+        unassigned_volume_ml=unassigned_vol,
+        unassigned_fat_pct=unassigned_pct,
+        anchor_volumes_ml=(
+            partition_result.anchor_volumes_ml
+            if partition_result is not None
+            else {}
+        ),
+        quality_flags=[dataclasses.asdict(f) for f in quality_flags],
+        fat_hu_range=(
+            (fat_threshold_result.hu_low, fat_threshold_result.hu_high)
+            if fat_threshold_result is not None
+            else (0.0, 0.0)
+        ),
+        voxel_volume_ml=voxel_vol,
+        excluded_anchors=(
+            partition_result.excluded_anchors
+            if partition_result is not None
+            else []
+        ),
+        islands_removed=(
+            cleanup_result.islands_removed if cleanup_result is not None else 0
+        ),
+        total_removed_volume_mm3=(
+            cleanup_result.total_removed_volume_mm3
+            if cleanup_result is not None
+            else 0.0
+        ),
+        warnings=list(warnings),
+        errors=list(errors),
+    )
+    try:
+        save_pipeline_result(pipeline_result_data, patient_output_dir)
+        logger.info(
+            "[%s] Step %d/%d: Pipeline result data saved to %s",
+            _ts(), step + 1, step_total, patient_output_dir,
+        )
+    except Exception as exc:
+        errors.append(f"Saving pipeline result data failed: {exc}")
+        logger.error(
+            "[%s] Step %d/%d: %s",
+            _ts(), step + 1, step_total, exc,
+        )
 
     logger.info(
         "[%s] Pipeline %s for %s (%.1f s, %d error(s), %d warning(s))",

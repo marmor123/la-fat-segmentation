@@ -14,6 +14,11 @@ from la_fat.mesh_extractor import (
 from la_fat.partition_engine import PartitionResult, partition_fat
 from la_fat.pipeline import PipelineResult, run_fat_extraction_pipeline
 from la_fat.pipeline_types import PipelineArtifacts, SurfaceSpec, ViewportPreset
+from la_fat.pipeline_result import (
+    PipelineResultData,
+    load_pipeline_result,
+    save_pipeline_result,
+)
 from la_fat.preprocessor import ResampleResult, resample_to_isotropic
 from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
 from la_fat.quality_flagger import QualityFlag, generate_quality_flags
@@ -31,6 +36,7 @@ __all__ = [
     "PipelineArtifacts",
     "PipelineConfig",
     "PipelineResult",
+    "PipelineResultData",
     "PartitionResult",
     "QualityFlag",
     "ResampleResult",
@@ -45,9 +51,11 @@ __all__ = [
     "generate_dashboard",
     "generate_quality_flags",
     "is_ts_available",
+    "load_pipeline_result",
     "partition_fat",
     "resample_to_isotropic",
     "resolve_ts_mask_path",
     "run_fat_extraction_pipeline",
     "run_ts_precompute",
+    "save_pipeline_result",
 ]
