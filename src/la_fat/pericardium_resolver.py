@@ -39,6 +39,7 @@ class PericardiumResult:
     fallback_triggered: bool
     fallback_reason: str | None
     method: str
+    volume_ml: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ def resolve_pericardium(
                 fallback_triggered=False,
                 fallback_reason=None,
                 method="ts_direct",
+                volume_ml=float(volume_ml),
             )
         reason = (
             f"TS pericardium volume {volume_ml:.1f} ml < "
@@ -180,11 +182,13 @@ def resolve_pericardium(
             f" (chambers used: {', '.join(used_keys)})"
         )
 
+    fallback_volume_ml = float(np.count_nonzero(dilated) * voxel_volume_ml)
     return PericardiumResult(
         mask=dilated,
         fallback_triggered=True,
         fallback_reason=fallback_reason,
         method="convex_hull_fallback",
+        volume_ml=fallback_volume_ml,
     )
 
 

@@ -47,6 +47,8 @@ class FatThresholdResult:
     fallback_reason: str | None
     method: str
     num_voxels_fit: int
+    clamped_low: bool = False
+    clamped_high: bool = False
 
 
 def compute_fat_threshold(
@@ -122,12 +124,18 @@ def compute_fat_threshold(
         )
 
     # ---- Compute range -------------------------------------------------------
-    hu_low: float = mean_hu - config.gaussian_sigma_multiplier * sigma_hu
-    hu_high: float = mean_hu + config.gaussian_sigma_multiplier * sigma_hu
+    hu_low_unclamped: float = (
+        mean_hu - config.gaussian_sigma_multiplier * sigma_hu
+    )
+    hu_high_unclamped: float = (
+        mean_hu + config.gaussian_sigma_multiplier * sigma_hu
+    )
 
     # ---- Clamp to fallback bounds --------------------------------------------
-    hu_low = max(hu_low, config.hu_fallback_low)
-    hu_high = min(hu_high, config.hu_fallback_high)
+    hu_low: float = max(hu_low_unclamped, config.hu_fallback_low)
+    hu_high: float = min(hu_high_unclamped, config.hu_fallback_high)
+    clamped_low: bool = hu_low_unclamped < config.hu_fallback_low
+    clamped_high: bool = hu_high_unclamped > config.hu_fallback_high
 
     # ---- Sanity check --------------------------------------------------------
     if hu_low >= hu_high:
@@ -153,4 +161,6 @@ def compute_fat_threshold(
         fallback_reason=None,
         method="gaussian_fit",
         num_voxels_fit=num_voxels,
+        clamped_low=clamped_low,
+        clamped_high=clamped_high,
     )

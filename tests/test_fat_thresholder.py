@@ -386,6 +386,70 @@ class TestMethodField:
         assert result.method == "fixed_fallback"
 
 
+class TestClampingFlags:
+    """When output range is clamped to fallback bounds, the clamped_low /
+    clamped_high flags should be set.  Clamping is NOT a fallback — the
+    Gaussian fit succeeded, but tails were cut."""
+
+    def test_low_clamped_flag_set(self):
+        """Distribution far below -190 → clamped_low=True, still gaussian_fit."""
+        cfg = PipelineConfig()
+        ct, mask = _make_ct_with_fat(
+            shape=(64, 64, 64),
+            fat_mean=-250.0,
+            fat_sigma=30.0,
+            rng_seed=42,
+        )
+        result = compute_fat_threshold(ct, mask, cfg)
+        assert result.method == "gaussian_fit"
+        assert not result.fallback_triggered
+        assert result.clamped_low is True
+        assert result.hu_low == cfg.hu_fallback_low
+
+    def test_high_clamped_flag_set(self):
+        """Distribution near -25 mean, sigma 5 → upper bound -15, clamped to -30."""
+        cfg = PipelineConfig()
+        ct, mask = _make_ct_with_fat(
+            shape=(64, 64, 64),
+            fat_mean=-25.0,
+            fat_sigma=5.0,
+            rng_seed=42,
+        )
+        result = compute_fat_threshold(ct, mask, cfg)
+        assert result.method == "gaussian_fit"
+        assert not result.fallback_triggered
+        assert result.clamped_high is True
+        assert result.hu_high == cfg.hu_fallback_high
+
+    def test_no_clamping_when_within_bounds(self):
+        """Distribution well within fallback bounds → both flags False."""
+        cfg = PipelineConfig()
+        ct, mask = _make_ct_with_fat(
+            shape=(64, 64, 64),
+            fat_mean=-110.0,
+            fat_sigma=20.0,
+            rng_seed=42,
+        )
+        result = compute_fat_threshold(ct, mask, cfg)
+        assert not result.fallback_triggered
+        assert result.clamped_low is False
+        assert result.clamped_high is False
+
+    def test_fallback_path_both_false(self):
+        """Full fallback → clamped flags should be False (not clamped, full
+        replacement)."""
+        cfg = PipelineConfig()
+        shape = (16, 16, 16)
+        ct = np.ones(shape, dtype=np.float32) * 200.0
+        mask = np.zeros(shape, dtype=np.uint8)
+        mask[4:8, 4:8, 4:8] = 1
+
+        result = compute_fat_threshold(ct, mask, cfg)
+        assert result.fallback_triggered
+        assert result.clamped_low is False
+        assert result.clamped_high is False
+
+
 class TestSanityCheckFallback:
     """If clamping produces hu_low >= hu_high, fallback should trigger."""
 

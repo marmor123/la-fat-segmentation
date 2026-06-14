@@ -27,6 +27,8 @@ _FIELD_TYPES: dict[str, type] = {
     "la_fat_volume_high_ml": float,
     "max_unassigned_fat_pct": float,
     "max_gaussian_sigma": float,
+    "max_lv_la_ratio": float,
+    "min_fat_fraction_pct": float,
     "data_dir": str,
     "output_dir": str,
     "intermediate_subdir": str,
@@ -67,6 +69,8 @@ class PipelineConfig:
     la_fat_volume_high_ml: float = 150.0
     max_unassigned_fat_pct: float = 80.0
     max_gaussian_sigma: float = 100.0
+    max_lv_la_ratio: float = 4.0
+    min_fat_fraction_pct: float = 8.0
 
     # --- File-system paths ---------------------------------------------------
     data_dir: str = "data"

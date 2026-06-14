@@ -80,6 +80,14 @@ class TestPipelineConfigDefaults:
         cfg = PipelineConfig()
         assert cfg.raw_subdir == "raw"
 
+    def test_default_max_lv_la_ratio(self):
+        cfg = PipelineConfig()
+        assert cfg.max_lv_la_ratio == 4.0
+
+    def test_default_min_fat_fraction_pct(self):
+        cfg = PipelineConfig()
+        assert cfg.min_fat_fraction_pct == 8.0
+
 
 class TestPipelineConfigFromYaml:
     """Tests for the from_yaml class method."""

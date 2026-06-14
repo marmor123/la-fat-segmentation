@@ -155,19 +155,22 @@ def generate_quality_flags(
             )
         )
 
-    # LV captures more total fat than LA.
+    # LV/LA ratio exceeds threshold.
     lv_volume = partition_result.anchor_volumes_ml.get("LV", 0.0)
-    if lv_volume > la_volume:
+    la_safe = max(la_volume, 0.001)
+    lv_la_ratio = lv_volume / la_safe
+    if lv_la_ratio > config.max_lv_la_ratio:
         flags.append(
             QualityFlag(
                 severity="medium",
-                concern="lv_exceeds_la",
+                concern="lv_la_ratio_high",
                 detail=(
-                    f"LV fat volume {lv_volume:.2f} ml exceeds LA fat volume "
-                    f"{la_volume:.2f} ml"
+                    f"LV/LA fat volume ratio {lv_la_ratio:.1f} exceeds "
+                    f"threshold {config.max_lv_la_ratio} "
+                    f"(LA={la_volume:.2f} ml, LV={lv_volume:.2f} ml)"
                 ),
-                threshold_value=None,
-                actual_value=lv_volume,
+                threshold_value=config.max_lv_la_ratio,
+                actual_value=lv_la_ratio,
             )
         )
 
@@ -188,9 +191,31 @@ def generate_quality_flags(
             )
         )
 
+    # Total epicardial fat fraction of pericardium volume too low.
+    # Indicates either genuinely low fat or possibly a loose pericardium
+    # mask / contrast-impaired fat threshold.
+    peri_vol = pericardium_result.volume_ml
+    if peri_vol > 0.0:
+        fat_fraction_pct = total / peri_vol * 100.0
+        if fat_fraction_pct < config.min_fat_fraction_pct:
+            flags.append(
+                QualityFlag(
+                    severity="medium",
+                    concern="low_fat_fraction",
+                    detail=(
+                        f"Epicardial fat ({total:.2f} ml) is only "
+                        f"{fat_fraction_pct:.1f}% of pericardium volume "
+                        f"({peri_vol:.2f} ml) — below {config.min_fat_fraction_pct}% "
+                        f"threshold"
+                    ),
+                    threshold_value=config.min_fat_fraction_pct,
+                    actual_value=fat_fraction_pct,
+                )
+            )
+
     # ── LOW CONCERN ──────────────────────────────────────────────────────────
 
-    # Wide Gaussian sigma.
+    # Wide Gaussian sigma (fit succeeded but spread is unusually large).
     if fat_threshold_result.sigma_hu > config.max_gaussian_sigma:
         flags.append(
             QualityFlag(
@@ -205,18 +230,30 @@ def generate_quality_flags(
             )
         )
 
-    # Small islands cleaned up.
-    if cleanup_result.islands_removed > 0:
+    # HU range clamped to fallback bounds (partial — fit succeeded, but
+    # one or both tails were cut).  Only when fallback was NOT triggered
+    # (full fallback is a separate high-concern flag).
+    if (
+        not fat_threshold_result.fallback_triggered
+        and (fat_threshold_result.clamped_low or fat_threshold_result.clamped_high)
+    ):
+        clamped_parts: list[str] = []
+        if fat_threshold_result.clamped_low:
+            clamped_parts.append("lower bound")
+        if fat_threshold_result.clamped_high:
+            clamped_parts.append("upper bound")
         flags.append(
             QualityFlag(
                 severity="low",
-                concern="islands_cleaned",
+                concern="hu_range_clamped",
                 detail=(
-                    f"{cleanup_result.islands_removed} small island(s) removed "
-                    f"(total volume: {cleanup_result.total_removed_volume_mm3:.2f} mm³)"
+                    f"Per-patient fat HU range clamped to fixed fallback at "
+                    f"{' and '.join(clamped_parts)} (fitted range would have "
+                    f"exceeded [{config.hu_fallback_low}, "
+                    f"{config.hu_fallback_high}])"
                 ),
                 threshold_value=None,
-                actual_value=float(cleanup_result.islands_removed),
+                actual_value=None,
             )
         )
 

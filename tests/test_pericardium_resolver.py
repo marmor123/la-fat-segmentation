@@ -134,6 +134,15 @@ class TestNormalPath:
         )
         assert result.mask.shape == SHAPE
 
+    def test_volume_ml_computed(self, all_chambers: dict[str, np.ndarray]):
+        """Volume should be computed from voxel count and spacing."""
+        result = resolve_pericardium(
+            all_chambers, CFG, spacing=SPACING
+        )
+        # Sphere radius 20 voxels → ~113 ml
+        assert result.volume_ml > 100.0
+        assert result.volume_ml < 130.0
+
 
 class TestFallbackTooSmall:
     """Fallback triggers when pericardium exists but is too small."""
