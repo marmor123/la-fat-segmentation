@@ -64,6 +64,47 @@ _RESAMPLED_CT_FILENAME = "{patient_id}_ct_resampled.nii.gz"
 
 
 # ---------------------------------------------------------------------------
+# Pipeline state (mutable, for intra-pipeline coordination)
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class PipelineState:
+    """Mutable state container for pipeline steps.
+
+    Each step function receives this and mutates it.  Non-frozen so
+    steps can freely assign attributes.
+    """
+
+    patient_id: str
+    cfg: PipelineConfig | None = None
+    data_dir: str = ""
+    output_dir: str = ""
+    intermediate_dir: str = ""
+    raw_ct_dir: str = ""
+    patient_output_dir: str = ""
+    spacing: tuple[float, float, float] = (1.5, 1.5, 1.5)
+    ct_array: np.ndarray | None = None
+    ct_spacing: tuple[float, float, float] = (1.5, 1.5, 1.5)
+    ct_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    ct_direction: np.ndarray = dataclasses.field(default_factory=lambda: np.eye(3))
+    loaded_masks: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
+    pericardium_result: PericardiumResult | None = None
+    fat_threshold_result: FatThresholdResult | None = None
+    partition_result: PartitionResult | None = None
+    anchor_masks: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
+    cleanup_result: CleanupResult | None = None
+    mesh_paths: dict[str, list[str]] | None = None
+    quality_flags: list[QualityFlag] = dataclasses.field(default_factory=list)
+    dashboard_output: DashboardOutput | None = None
+    errors: list[str] = dataclasses.field(default_factory=list)
+    warnings: list[str] = dataclasses.field(default_factory=list)
+    start_time: float = 0.0
+    step: int = 0
+    step_total: int = 0
+
+
+# ---------------------------------------------------------------------------
 # Pipeline result
 # ---------------------------------------------------------------------------
 
@@ -162,553 +203,77 @@ def run_fat_extraction_pipeline(
         Always returned — the pipeline never raises.
     """
     start_time = time.perf_counter()
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    pericardium_result: PericardiumResult | None = None
-    fat_threshold_result: FatThresholdResult | None = None
-    partition_result: PartitionResult | None = None
-    cleanup_result: CleanupResult | None = None
-    quality_flags: list[QualityFlag] = []
-    dashboard_output: DashboardOutput | None = None
-    mesh_paths: dict[str, list[str]] | None = None
 
     # ── Step 0: Configuration ───────────────────────────────────────────────
-    step_total = 13
-    step = 0
-
-    try:
-        if config is not None:
-            cfg = config
-        elif config_path is not None:
-            cfg = PipelineConfig.from_yaml(config_path)
-            logger.info(
-                "[%s] Step 0/%d: Loaded config from %s",
-                _ts(), step_total, config_path,
-            )
-        else:
-            cfg = PipelineConfig()
-            logger.info(
-                "[%s] Step 0/%d: Using default configuration",
-                _ts(), step_total,
-            )
-
-        data_dir: str = cfg.data_dir
-        output_dir: str = cfg.output_dir
-        intermediate_subdir: str = cfg.intermediate_subdir
-        raw_subdir: str = cfg.raw_subdir
-
-        intermediate_dir = os.path.join(data_dir, intermediate_subdir, patient_id)
-        raw_ct_dir = os.path.join(data_dir, raw_subdir)
-        patient_output_dir = os.path.join(output_dir, patient_id)
-        spacing: tuple[float, float, float] = (
-            cfg.spacing_mm,
-            cfg.spacing_mm,
-            cfg.spacing_mm,
-        )
-
-        # ── Step 1: Load / resample CT ────────────────────────────────────
-        step += 1
+    if config is not None:
+        cfg = config
+    elif config_path is not None:
+        cfg = PipelineConfig.from_yaml(config_path)
         logger.info(
-            "[%s] Step %d/%d: Loading / resampling CT for patient %s",
-            _ts(), step, step_total, patient_id,
+            "[%s] Step 0/12: Loaded config from %s",
+            _ts(), config_path,
         )
-
-        ct_array: np.ndarray | None = None
-        ct_spacing: tuple[float, float, float] = spacing
-        ct_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
-        ct_direction: np.ndarray = np.eye(3)
-
-        # Check for pre-resampled cache (try new + old naming).
-        resampled_path = os.path.join(
-            intermediate_dir,
-            _RESAMPLED_CT_FILENAME.format(patient_id=patient_id),
-        )
-        if not os.path.isfile(resampled_path):
-            # Fallback: old naming without patient_id prefix
-            legacy_ct_path = os.path.join(intermediate_dir, "ct_resampled.nii.gz")
-            if os.path.isfile(legacy_ct_path):
-                resampled_path = legacy_ct_path
-        if os.path.isfile(resampled_path):
-            logger.info(
-                "[%s] Step %d/%d: Loading pre-resampled CT from %s",
-                _ts(), step, step_total, resampled_path,
-            )
-            img = sitk.ReadImage(resampled_path)
-            ct_array = sitk.GetArrayFromImage(img)
-            ct_spacing = img.GetSpacing()
-            ct_origin = img.GetOrigin()
-            ct_direction = np.array(img.GetDirection()).reshape(3, 3)
-        else:
-            raw_ct_path = os.path.join(raw_ct_dir, f"{patient_id}.nii.gz")
-            if not os.path.isfile(raw_ct_path):
-                raw_ct_path = os.path.join(raw_ct_dir, f"{patient_id}.nii")
-            if not os.path.isfile(raw_ct_path):
-                raise FileNotFoundError(
-                    f"Raw CT volume not found for patient {patient_id} "
-                    f"(searched for .nii.gz and .nii in {raw_ct_dir})"
-                )
-
-            logger.info(
-                "[%s] Step %d/%d: Resampling CT %s to isotropic %.1f mm",
-                _ts(), step, step_total, raw_ct_path, cfg.spacing_mm,
-            )
-            resample_result: ResampleResult = resample_to_isotropic(
-                raw_ct_path, cfg.spacing_mm,
-            )
-            ct_array = resample_result.ct_array
-            ct_spacing = resample_result.spacing
-            ct_origin = resample_result.origin
-            ct_direction = resample_result.direction
-
-            # Cache resampled CT for future runs.
-            os.makedirs(os.path.dirname(resampled_path), exist_ok=True)
-            nifti_io.save_nifti(
-                ct_array,
-                resampled_path,
-                spacing=ct_spacing,
-                origin=ct_origin,
-                direction=ct_direction,
-            )
-            logger.info(
-                "[%s] Step %d/%d: Cached resampled CT to %s",
-                _ts(), step, step_total, resampled_path,
-            )
-
-        # ── Step 2: Load TS masks from disk ───────────────────────────────
-        step += 1
+    else:
+        cfg = PipelineConfig()
         logger.info(
-            "[%s] Step %d/%d: Loading TS masks from %s",
-            _ts(), step, step_total, intermediate_dir,
+            "[%s] Step 0/12: Using default configuration",
+            _ts(),
         )
 
-        loaded_masks: dict[str, np.ndarray] = _load_masks(
-            intermediate_dir, patient_id,
-        )
-
-        if not loaded_masks:
-            raise FileNotFoundError(
-                f"No TS masks found in {intermediate_dir} "
-                f"for patient {patient_id}"
-            )
-
-        logger.info(
-            "[%s] Step %d/%d: Loaded %d mask(s): %s",
-            _ts(), step, step_total,
-            len(loaded_masks),
-            ", ".join(sorted(loaded_masks.keys())),
-        )
-
-        # ── Step 3: Resolve pericardium ───────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Resolving pericardium",
-            _ts(), step, step_total,
-        )
-
-        ts_masks_for_resolver: dict[str, np.ndarray] = {}
-        for k in _CHAMBER_KEYS:
-            if k in loaded_masks:
-                ts_masks_for_resolver[k] = loaded_masks[k]
-        if "Pericardium" in loaded_masks:
-            ts_masks_for_resolver["pericardium"] = loaded_masks["Pericardium"]
-
-        try:
-            pericardium_result = resolve_pericardium(
-                ts_masks_for_resolver, cfg, spacing,
-            )
-            if pericardium_result.fallback_triggered:
-                msg = (
-                    f"Pericardium fallback triggered: "
-                    f"{pericardium_result.fallback_reason}"
-                )
-                warnings.append(msg)
-                logger.warning(
-                    "[%s] Step %d/%d: %s",
-                    _ts(), step, step_total, msg,
-                )
-            else:
-                logger.info(
-                    "[%s] Step %d/%d: Pericardium resolved via %s",
-                    _ts(), step, step_total, pericardium_result.method,
-                )
-        except ValueError as exc:
-            errors.append(f"Pericardium resolution failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-            # Cannot continue without pericardium
-            return _build_result(
-                patient_id=patient_id,
-                start_time=start_time,
-                errors=errors,
-                warnings=warnings,
-            )
-
-        # ── Step 4: Compute fat threshold ─────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Computing fat HU threshold",
-            _ts(), step, step_total,
-        )
-
-        fat_threshold_result = compute_fat_threshold(
-            ct_array, pericardium_result.mask, cfg,
-        )
-        if fat_threshold_result.fallback_triggered:
-            msg = (
-                f"Fat threshold fallback triggered: "
-                f"{fat_threshold_result.fallback_reason}"
-            )
-            warnings.append(msg)
-            logger.warning(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, msg,
-            )
-        else:
-            logger.info(
-                "[%s] Step %d/%d: Fat threshold — HU range [%.1f, %.1f] "
-                "(mean=%.1f, sigma=%.1f, n=%d)",
-                _ts(), step, step_total,
-                fat_threshold_result.hu_low,
-                fat_threshold_result.hu_high,
-                fat_threshold_result.mean_hu,
-                fat_threshold_result.sigma_hu,
-                fat_threshold_result.num_voxels_fit,
-            )
-
-        # ── Step 5: Partition fat ─────────────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Partitioning epicardial fat",
-            _ts(), step, step_total,
-        )
-
-        anchor_masks: dict[str, np.ndarray] = {}
-        for k in _ANCHOR_KEYS:
-            if k in loaded_masks:
-                anchor_masks[k] = loaded_masks[k]
-
-        try:
-            partition_result = partition_fat(
-                ct_array=ct_array,
-                pericardium_mask=pericardium_result.mask,
-                fat_hu_range=(
-                    fat_threshold_result.hu_low,
-                    fat_threshold_result.hu_high,
-                ),
-                anchor_masks=anchor_masks,
-                config=cfg,
-                spacing=spacing,
-            )
-            if partition_result.excluded_anchors:
-                msg = (
-                    f"Anchor(s) excluded: "
-                    f"{', '.join(partition_result.excluded_anchors)}"
-                )
-                warnings.append(msg)
-                logger.warning(
-                    "[%s] Step %d/%d: %s",
-                    _ts(), step, step_total, msg,
-                )
-            logger.info(
-                "[%s] Step %d/%d: Partition complete — "
-                "LA fat=%.2f ml, total fat=%.2f ml, "
-                "unassigned=%.2f ml",
-                _ts(), step, step_total,
-                partition_result.anchor_volumes_ml.get("LA", 0.0),
-                partition_result.total_fat_volume_ml,
-                partition_result.unassigned_volume_ml,
-            )
-        except ValueError as exc:
-            errors.append(f"Fat partition failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-            # Cannot continue without partition
-            return _build_result(
-                patient_id=patient_id,
-                start_time=start_time,
-                errors=errors,
-                warnings=warnings,
-                pericardium_result=pericardium_result,
-                fat_threshold_result=fat_threshold_result,
-            )
-
-        # ── Step 6: Cleanup LA fat mask ───────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Cleaning LA fat mask",
-            _ts(), step, step_total,
-        )
-
-        try:
-            cleanup_result = cleanup_la_fat_mask(
-                partition_result.la_fat_mask, cfg, spacing,
-                apply_opening=False,
-                apply_vessel_filling=False,
-            )
-            if cleanup_result.islands_removed > 0:
-                logger.info(
-                    "[%s] Step %d/%d: Removed %d island(s) "
-                    "(total %.2f mm³)",
-                    _ts(), step, step_total,
-                    cleanup_result.islands_removed,
-                    cleanup_result.total_removed_volume_mm3,
-                )
-            else:
-                logger.info(
-                    "[%s] Step %d/%d: No islands removed",
-                    _ts(), step, step_total,
-                )
-        except Exception as exc:
-            errors.append(f"Cleanup failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-            cleanup_result = None
-
-        # ── Step 7: Extract meshes ────────────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Extracting meshes for interactive visualization",
-            _ts(), step, step_total,
-        )
-
-        try:
-            pipeline_artifacts = PipelineArtifacts(
-                anchor_masks=anchor_masks,
-                pericardium_mask=pericardium_result.mask,
-                partition_result=partition_result,
-                cleanup_result=cleanup_result or _empty_cleanup_result(),
-                spacing=spacing,
-            )
-            mesh_results = extract_interactive_meshes(
-                pipeline_artifacts, patient_output_dir,
-            )
-            mesh_paths = {}
-            for step_name, step_meshes in mesh_results.items():
-                ply_files = [
-                    os.path.join(
-                        patient_output_dir,
-                        "meshes",
-                        step_name,
-                        f"{sn}.ply",
-                    )
-                    for sn, md in step_meshes.items()
-                    if md is not None
-                ]
-                mesh_paths[step_name] = ply_files
-            total_meshes = sum(len(files) for files in mesh_paths.values())
-            logger.info(
-                "[%s] Step %d/%d: Mesh extraction complete — "
-                "%d meshes saved to %s/meshes",
-                _ts(), step, step_total,
-                total_meshes, patient_output_dir,
-            )
-        except Exception as exc:
-            errors.append(f"Mesh extraction failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-            mesh_paths = None
-
-        # ── Step 8: Generate quality flags ────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Generating quality flags",
-            _ts(), step, step_total,
-        )
-
-        try:
-            quality_flags = generate_quality_flags(
-                partition_result=partition_result,
-                fat_threshold_result=fat_threshold_result,
-                pericardium_result=pericardium_result,
-                cleanup_result=cleanup_result or _empty_cleanup_result(),
-                config=cfg,
-            )
-            logger.info(
-                "[%s] Step %d/%d: %d quality flag(s) generated",
-                _ts(), step, step_total, len(quality_flags),
-            )
-        except Exception as exc:
-            errors.append(f"Quality flag generation failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-
-        # ── Step 9: Generate QA dashboard ─────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Generating QA dashboard",
-            _ts(), step, step_total,
-        )
-
-        try:
-            dashboard_output = generate_dashboard(
-                ct_array=ct_array,
-                anchor_masks=anchor_masks,
-                pericardium_result=pericardium_result,
-                partition_result=partition_result,
-                fat_threshold_result=fat_threshold_result,
-                cleanup_result=cleanup_result or _empty_cleanup_result(),
-                quality_flags=quality_flags,
-                config=cfg,
-                patient_id=patient_id,
-                output_dir=patient_output_dir,
-                spacing=spacing,
-            )
-            logger.info(
-                "[%s] Step %d/%d: Dashboard saved to %s",
-                _ts(), step, step_total, patient_output_dir,
-            )
-        except Exception as exc:
-            errors.append(f"QA dashboard generation failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-
-        # ── Step 10: Save LA fat mask ─────────────────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Saving LA fat mask",
-            _ts(), step, step_total,
-        )
-
-        la_fat_mask_path = os.path.join(patient_output_dir, "la_fat_mask.nii.gz")
-        if cleanup_result is not None:
-            try:
-                os.makedirs(patient_output_dir, exist_ok=True)
-                nifti_io.save_nifti(
-                    cleanup_result.cleaned_mask.astype(np.uint8),
-                    la_fat_mask_path,
-                    spacing=ct_spacing,
-                    origin=ct_origin,
-                    direction=ct_direction,
-                )
-                logger.info(
-                    "[%s] Step %d/%d: LA fat mask saved to %s",
-                    _ts(), step, step_total, la_fat_mask_path,
-                )
-            except Exception as exc:
-                errors.append(f"Saving LA fat mask failed: {exc}")
-                logger.error(
-                    "[%s] Step %d/%d: %s",
-                    _ts(), step, step_total, exc,
-                )
-        else:
-            warnings.append("LA fat mask not saved (cleanup result unavailable)")
-            logger.warning(
-                "[%s] Step %d/%d: Cleanup result unavailable, skipping mask save",
-                _ts(), step, step_total,
-            )
-
-        # ── Step 11: Save quality flags as JSON ───────────────────────────
-        step += 1
-        logger.info(
-            "[%s] Step %d/%d: Saving quality flags",
-            _ts(), step, step_total,
-        )
-
-        quality_flags_path = os.path.join(
-            patient_output_dir, "quality_flags.json",
-        )
-        try:
-            os.makedirs(patient_output_dir, exist_ok=True)
-            _save_quality_flags_json(quality_flags, quality_flags_path)
-            logger.info(
-                "[%s] Step %d/%d: Quality flags saved to %s",
-                _ts(), step, step_total, quality_flags_path,
-            )
-        except Exception as exc:
-            errors.append(f"Saving quality flags failed: {exc}")
-            logger.error(
-                "[%s] Step %d/%d: %s",
-                _ts(), step, step_total, exc,
-            )
-
-    except FileNotFoundError as exc:
-        errors.append(str(exc))
-        logger.error("[%s] %s", _ts(), exc)
-    except Exception as exc:
-        errors.append(f"Unexpected pipeline error: {exc}")
-        logger.exception("[%s] Unexpected pipeline error: %s", _ts(), exc)
-
-    success = len(errors) == 0
-    total_runtime = time.perf_counter() - start_time
-
-    # ── Step 12: Save PipelineResultData (single-source-of-truth for dashboards)
-    voxel_vol = voxel_volume_ml(spacing)
-    total_fat = (
-        partition_result.total_fat_volume_ml if partition_result is not None else 0.0
-    )
-    unassigned_vol = (
-        partition_result.unassigned_volume_ml if partition_result is not None else 0.0
-    )
-    unassigned_pct = (
-        (unassigned_vol / total_fat * 100.0) if total_fat > 0.001 else 0.0
+    data_dir: str = cfg.data_dir
+    output_dir: str = cfg.output_dir
+    intermediate_dir = os.path.join(data_dir, cfg.intermediate_subdir, patient_id)
+    raw_ct_dir = os.path.join(data_dir, cfg.raw_subdir)
+    patient_output_dir = os.path.join(output_dir, patient_id)
+    spacing: tuple[float, float, float] = (
+        cfg.spacing_mm,
+        cfg.spacing_mm,
+        cfg.spacing_mm,
     )
 
-    pipeline_result_data = PipelineResultData(
+    # ── Build state ─────────────────────────────────────────────────────────
+    state = PipelineState(
         patient_id=patient_id,
-        la_fat_volume_ml=(
-            partition_result.anchor_volumes_ml.get("LA", 0.0)
-            if partition_result is not None
-            else 0.0
-        ),
-        total_fat_volume_ml=total_fat,
-        pericardium_volume_ml=(
-            pericardium_result.volume_ml if pericardium_result is not None else 0.0
-        ),
-        unassigned_volume_ml=unassigned_vol,
-        unassigned_fat_pct=unassigned_pct,
-        anchor_volumes_ml=(
-            partition_result.anchor_volumes_ml
-            if partition_result is not None
-            else {}
-        ),
-        quality_flags=[dataclasses.asdict(f) for f in quality_flags],
-        fat_hu_range=(
-            (fat_threshold_result.hu_low, fat_threshold_result.hu_high)
-            if fat_threshold_result is not None
-            else (0.0, 0.0)
-        ),
-        voxel_volume_ml=voxel_vol,
-        excluded_anchors=(
-            partition_result.excluded_anchors
-            if partition_result is not None
-            else []
-        ),
-        islands_removed=(
-            cleanup_result.islands_removed if cleanup_result is not None else 0
-        ),
-        total_removed_volume_mm3=(
-            cleanup_result.total_removed_volume_mm3
-            if cleanup_result is not None
-            else 0.0
-        ),
-        warnings=list(warnings),
-        errors=list(errors),
+        cfg=cfg,
+        data_dir=data_dir,
+        output_dir=output_dir,
+        intermediate_dir=intermediate_dir,
+        raw_ct_dir=raw_ct_dir,
+        patient_output_dir=patient_output_dir,
+        spacing=spacing,
+        start_time=start_time,
     )
-    try:
-        save_pipeline_result(pipeline_result_data, patient_output_dir)
-        logger.info(
-            "[%s] Step %d/%d: Pipeline result data saved to %s",
-            _ts(), step + 1, step_total, patient_output_dir,
-        )
-    except Exception as exc:
-        errors.append(f"Saving pipeline result data failed: {exc}")
-        logger.error(
-            "[%s] Step %d/%d: %s",
-            _ts(), step + 1, step_total, exc,
-        )
+
+    # ── Pipeline steps ──────────────────────────────────────────────────────
+    steps: list[tuple[str, t.Callable, str, bool]] = [
+        ("Load/resample CT", _step_load_ct, "CT loading", True),
+        ("Load TS masks", _step_load_masks, "TS mask loading", True),
+        ("Resolve pericardium", _step_resolve_pericardium,
+         "Pericardium resolution", True),
+        ("Compute fat threshold", _step_compute_fat_threshold,
+         "Fat threshold", True),
+        ("Partition fat", _step_partition_fat, "Fat partition", True),
+        ("Cleanup LA fat mask", _step_cleanup, "Cleanup", False),
+        ("Extract meshes", _step_extract_meshes, "Mesh extraction", False),
+        ("Generate quality flags", _step_generate_quality_flags,
+         "Quality flag generation", False),
+        ("Generate QA dashboard", _step_generate_dashboard,
+         "QA dashboard generation", False),
+        ("Save LA fat mask", _step_save_la_fat_mask,
+         "Saving LA fat mask", False),
+        ("Save quality flags", _step_save_quality_flags,
+         "Saving quality flags", False),
+        ("Save pipeline result", _step_save_pipeline_result,
+         "Saving pipeline result data", False),
+    ]
+
+    early_result = _run_steps(state, steps)
+    if early_result is not None:
+        return early_result
+
+    # ── Build final result ──────────────────────────────────────────────────
+    success = len(state.errors) == 0
+    total_runtime = time.perf_counter() - start_time
 
     logger.info(
         "[%s] Pipeline %s for %s (%.1f s, %d error(s), %d warning(s))",
@@ -716,98 +281,24 @@ def run_fat_extraction_pipeline(
         "succeeded" if success else "failed",
         patient_id,
         total_runtime,
-        len(errors),
-        len(warnings),
+        len(state.errors),
+        len(state.warnings),
     )
 
     return PipelineResult(
         patient_id=patient_id,
         success=success,
-        partition_result=partition_result,
-        fat_threshold_result=fat_threshold_result,
-        pericardium_result=pericardium_result,
-        cleanup_result=cleanup_result,
-        quality_flags=quality_flags,
-        dashboard_output=dashboard_output,
-        mesh_paths=mesh_paths,
-        errors=errors,
-        warnings=warnings,
+        partition_result=state.partition_result,
+        fat_threshold_result=state.fat_threshold_result,
+        pericardium_result=state.pericardium_result,
+        cleanup_result=state.cleanup_result,
+        quality_flags=state.quality_flags,
+        dashboard_output=state.dashboard_output,
+        mesh_paths=state.mesh_paths,
+        errors=state.errors,
+        warnings=state.warnings,
         total_runtime_seconds=total_runtime,
     )
-
-
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
-
-
-def main_cli() -> None:
-    """Console-script entry point for ``la-fat``.
-
-    Parses command-line arguments and runs
-    :func:`run_fat_extraction_pipeline`.
-    """
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="LA Fat Segmentation Pipeline — "
-        "extract epicardial adipose tissue from CT scans.",
-    )
-    parser.add_argument(
-        "--patient",
-        required=True,
-        help="Patient identifier (e.g. '0674')",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Path to YAML configuration file",
-    )
-    parser.add_argument(
-        "--data-dir",
-        default=None,
-        help="Override data directory (default: value in config)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=None,
-        help="Override output directory (default: value in config)",
-    )
-    args = parser.parse_args()
-
-    # Configure logging to stderr so stdout stays clean for the summary.
-    _configure_cli_logging()
-
-    # Build config, optionally overriding paths.
-    config: PipelineConfig | None = None
-    config_path: str | None = args.config
-
-    if args.config:
-        config = PipelineConfig.from_yaml(args.config)
-    if args.data_dir is not None or args.output_dir is not None:
-        if config is None:
-            config = PipelineConfig()
-        kwargs: dict[str, str] = {}
-        if args.data_dir is not None:
-            kwargs["data_dir"] = args.data_dir
-        if args.output_dir is not None:
-            kwargs["output_dir"] = args.output_dir
-        if kwargs:
-            # Frozen dataclass — replace with a new instance.
-            config = dataclasses.replace(config, **kwargs)
-
-    logger.info("Starting LA Fat extraction pipeline for patient %s", args.patient)
-    result = run_fat_extraction_pipeline(
-        patient_id=args.patient,
-        config=config,
-        config_path=None if config is not None else config_path,
-    )
-
-    # ── Print summary to stdout ──────────────────────────────────────────
-    _print_cli_summary(result)
-
-    import sys
-    sys.exit(0 if result.success else 1)
 
 
 # ---------------------------------------------------------------------------
@@ -841,7 +332,6 @@ def _load_masks(
                     internal_key, mask_path, exc,
                 )
     return masks
-
 
 
 def _save_quality_flags_json(
@@ -881,6 +371,466 @@ def _ts() -> str:
     return time.strftime("%H:%M:%S")
 
 
+def _run_steps(
+    state: PipelineState,
+    steps: list[tuple[str, t.Callable, str, bool]],
+) -> PipelineResult | None:
+    """Run a sequence of pipeline steps, accumulating errors.
+
+    Each step is a tuple of ``(name, callable, error_context, is_fatal)``.
+
+    *name* is the human-readable label for logging.  *callable* receives
+    the mutable *state* and is expected to mutate it.  *error_context* is
+    the prefix used in error messages.  *is_fatal* controls whether a
+    failure should halt the pipeline (``True``) or just be recorded and
+    continue (``False``).
+
+    Returns ``None`` when all steps run (even with non-fatal errors).
+    Returns a partial :class:`PipelineResult` when a fatal step fails
+    (the caller should return this immediately).
+    """
+    state.step_total = len(steps)
+    for step_idx, (step_name, step_fn, error_context, is_fatal) in enumerate(
+        steps, start=1,
+    ):
+        state.step = step_idx
+        logger.info(
+            "[%s] Step %d/%d: %s",
+            _ts(), state.step, state.step_total, step_name,
+        )
+        try:
+            step_fn(state)
+        except Exception as exc:
+            state.errors.append(f"{error_context} failed: {exc}")
+            logger.error(
+                "[%s] Step %d/%d: %s",
+                _ts(), state.step, state.step_total, exc,
+            )
+            if is_fatal:
+                return _build_result(
+                    patient_id=state.patient_id,
+                    start_time=state.start_time,
+                    errors=state.errors,
+                    warnings=state.warnings,
+                    pericardium_result=state.pericardium_result,
+                    fat_threshold_result=state.fat_threshold_result,
+                    partition_result=state.partition_result,
+                    cleanup_result=state.cleanup_result,
+                    quality_flags=state.quality_flags,
+                    dashboard_output=state.dashboard_output,
+                    mesh_paths=state.mesh_paths,
+                )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Step functions (each mutates PipelineState)
+# ---------------------------------------------------------------------------
+
+
+def _step_load_ct(state: PipelineState) -> None:
+    """Load / resample CT to isotropic spacing (pipeline step 1)."""
+    patient_id = state.patient_id
+    intermediate_dir = state.intermediate_dir
+    raw_ct_dir = state.raw_ct_dir
+    spacing = state.spacing
+    spacing_mm = state.cfg.spacing_mm if state.cfg else 1.5
+
+    ct_array: np.ndarray | None = None
+    ct_spacing: tuple[float, float, float] = spacing
+    ct_origin: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    ct_direction: np.ndarray = np.eye(3)
+
+    # Check for pre-resampled cache (try new + old naming).
+    resampled_path = os.path.join(
+        intermediate_dir,
+        _RESAMPLED_CT_FILENAME.format(patient_id=patient_id),
+    )
+    if not os.path.isfile(resampled_path):
+        legacy_ct_path = os.path.join(intermediate_dir, "ct_resampled.nii.gz")
+        if os.path.isfile(legacy_ct_path):
+            resampled_path = legacy_ct_path
+    if os.path.isfile(resampled_path):
+        logger.info(
+            "[%s] Step %d/%d: Loading pre-resampled CT from %s",
+            _ts(), state.step, state.step_total, resampled_path,
+        )
+        img = sitk.ReadImage(resampled_path)
+        ct_array = sitk.GetArrayFromImage(img)
+        ct_spacing = img.GetSpacing()
+        ct_origin = img.GetOrigin()
+        ct_direction = np.array(img.GetDirection()).reshape(3, 3)
+    else:
+        raw_ct_path = os.path.join(raw_ct_dir, f"{patient_id}.nii.gz")
+        if not os.path.isfile(raw_ct_path):
+            raw_ct_path = os.path.join(raw_ct_dir, f"{patient_id}.nii")
+        if not os.path.isfile(raw_ct_path):
+            raise FileNotFoundError(
+                f"Raw CT volume not found for patient {patient_id} "
+                f"(searched for .nii.gz and .nii in {raw_ct_dir})"
+            )
+
+        logger.info(
+            "[%s] Step %d/%d: Resampling CT %s to isotropic %.1f mm",
+            _ts(), state.step, state.step_total, raw_ct_path, spacing_mm,
+        )
+        resample_result: ResampleResult = resample_to_isotropic(
+            raw_ct_path, spacing_mm,
+        )
+        ct_array = resample_result.ct_array
+        ct_spacing = resample_result.spacing
+        ct_origin = resample_result.origin
+        ct_direction = resample_result.direction
+
+        os.makedirs(os.path.dirname(resampled_path), exist_ok=True)
+        nifti_io.save_nifti(
+            ct_array,
+            resampled_path,
+            spacing=ct_spacing,
+            origin=ct_origin,
+            direction=ct_direction,
+        )
+        logger.info(
+            "[%s] Step %d/%d: Cached resampled CT to %s",
+            _ts(), state.step, state.step_total, resampled_path,
+        )
+
+    state.ct_array = ct_array
+    state.ct_spacing = ct_spacing
+    state.ct_origin = ct_origin
+    state.ct_direction = ct_direction
+
+
+def _step_load_masks(state: PipelineState) -> None:
+    """Load TS masks from disk (pipeline step 2)."""
+    loaded_masks: dict[str, np.ndarray] = _load_masks(
+        state.intermediate_dir, state.patient_id,
+    )
+    if not loaded_masks:
+        raise FileNotFoundError(
+            f"No TS masks found in {state.intermediate_dir} "
+            f"for patient {state.patient_id}"
+        )
+    logger.info(
+        "[%s] Step %d/%d: Loaded %d mask(s): %s",
+        _ts(), state.step, state.step_total,
+        len(loaded_masks),
+        ", ".join(sorted(loaded_masks.keys())),
+    )
+    state.loaded_masks = loaded_masks
+
+    # Build anchor_masks used by later steps.
+    anchor_masks: dict[str, np.ndarray] = {}
+    for k in _ANCHOR_KEYS:
+        if k in loaded_masks:
+            anchor_masks[k] = loaded_masks[k]
+    state.anchor_masks = anchor_masks
+
+
+def _step_resolve_pericardium(state: PipelineState) -> None:
+    """Resolve pericardium (pipeline step 3, fatal)."""
+    ts_masks_for_resolver: dict[str, np.ndarray] = {}
+    for k in _CHAMBER_KEYS:
+        if k in state.loaded_masks:
+            ts_masks_for_resolver[k] = state.loaded_masks[k]
+    if "Pericardium" in state.loaded_masks:
+        ts_masks_for_resolver["pericardium"] = state.loaded_masks["Pericardium"]
+
+    pericardium_result = resolve_pericardium(
+        ts_masks_for_resolver, state.cfg, state.spacing,
+    )
+    if pericardium_result.fallback_triggered:
+        msg = (
+            f"Pericardium fallback triggered: "
+            f"{pericardium_result.fallback_reason}"
+        )
+        state.warnings.append(msg)
+        logger.warning(
+            "[%s] Step %d/%d: %s",
+            _ts(), state.step, state.step_total, msg,
+        )
+    else:
+        logger.info(
+            "[%s] Step %d/%d: Pericardium resolved via %s",
+            _ts(), state.step, state.step_total, pericardium_result.method,
+        )
+    state.pericardium_result = pericardium_result
+
+
+def _step_compute_fat_threshold(state: PipelineState) -> None:
+    """Compute fat HU threshold (pipeline step 4)."""
+    fat_threshold_result = compute_fat_threshold(
+        state.ct_array, state.pericardium_result.mask, state.cfg,
+    )
+    if fat_threshold_result.fallback_triggered:
+        msg = (
+            f"Fat threshold fallback triggered: "
+            f"{fat_threshold_result.fallback_reason}"
+        )
+        state.warnings.append(msg)
+        logger.warning(
+            "[%s] Step %d/%d: %s",
+            _ts(), state.step, state.step_total, msg,
+        )
+    else:
+        logger.info(
+            "[%s] Step %d/%d: Fat threshold — HU range [%.1f, %.1f] "
+            "(mean=%.1f, sigma=%.1f, n=%d)",
+            _ts(), state.step, state.step_total,
+            fat_threshold_result.hu_low,
+            fat_threshold_result.hu_high,
+            fat_threshold_result.mean_hu,
+            fat_threshold_result.sigma_hu,
+            fat_threshold_result.num_voxels_fit,
+        )
+    state.fat_threshold_result = fat_threshold_result
+
+
+def _step_partition_fat(state: PipelineState) -> None:
+    """Partition epicardial fat (pipeline step 5, fatal)."""
+    partition_result = partition_fat(
+        ct_array=state.ct_array,
+        pericardium_mask=state.pericardium_result.mask,
+        fat_hu_range=(
+            state.fat_threshold_result.hu_low,
+            state.fat_threshold_result.hu_high,
+        ),
+        anchor_masks=state.anchor_masks,
+        config=state.cfg,
+        spacing=state.spacing,
+    )
+    if partition_result.excluded_anchors:
+        msg = (
+            f"Anchor(s) excluded: "
+            f"{', '.join(partition_result.excluded_anchors)}"
+        )
+        state.warnings.append(msg)
+        logger.warning(
+            "[%s] Step %d/%d: %s",
+            _ts(), state.step, state.step_total, msg,
+        )
+    logger.info(
+        "[%s] Step %d/%d: Partition complete — "
+        "LA fat=%.2f ml, total fat=%.2f ml, "
+        "unassigned=%.2f ml",
+        _ts(), state.step, state.step_total,
+        partition_result.anchor_volumes_ml.get("LA", 0.0),
+        partition_result.total_fat_volume_ml,
+        partition_result.unassigned_volume_ml,
+    )
+    state.partition_result = partition_result
+
+
+def _step_cleanup(state: PipelineState) -> None:
+    """Clean LA fat mask (pipeline step 6, non-fatal)."""
+    cleanup_result = cleanup_la_fat_mask(
+        state.partition_result.la_fat_mask, state.cfg, state.spacing,
+        apply_opening=False,
+        apply_vessel_filling=False,
+    )
+    if cleanup_result.islands_removed > 0:
+        logger.info(
+            "[%s] Step %d/%d: Removed %d island(s) "
+            "(total %.2f mm³)",
+            _ts(), state.step, state.step_total,
+            cleanup_result.islands_removed,
+            cleanup_result.total_removed_volume_mm3,
+        )
+    else:
+        logger.info(
+            "[%s] Step %d/%d: No islands removed",
+            _ts(), state.step, state.step_total,
+        )
+    state.cleanup_result = cleanup_result
+
+
+def _step_extract_meshes(state: PipelineState) -> None:
+    """Extract interactive meshes (pipeline step 7, non-fatal)."""
+    pipeline_state_dict: dict[str, t.Any] = {
+        "anchor_masks": state.anchor_masks,
+        "pericardium_mask": state.pericardium_result.mask,
+        "partition_result": state.partition_result,
+        "cleanup_result": state.cleanup_result or _empty_cleanup_result(),
+        "spacing": state.spacing,
+    }
+    mesh_results = extract_interactive_meshes(
+        pipeline_state_dict, state.patient_output_dir,
+    )
+    mesh_paths: dict[str, list[str]] = {}
+    for step_name, step_meshes in mesh_results.items():
+        ply_files = [
+            os.path.join(
+                state.patient_output_dir,
+                "meshes",
+                step_name,
+                f"{sn}.ply",
+            )
+            for sn, md in step_meshes.items()
+            if md is not None
+        ]
+        mesh_paths[step_name] = ply_files
+    total_meshes = sum(len(files) for files in mesh_paths.values())
+    logger.info(
+        "[%s] Step %d/%d: Mesh extraction complete — "
+        "%d meshes saved to %s/meshes",
+        _ts(), state.step, state.step_total,
+        total_meshes, state.patient_output_dir,
+    )
+    state.mesh_paths = mesh_paths
+
+
+def _step_generate_quality_flags(state: PipelineState) -> None:
+    """Generate quality flags (pipeline step 8, non-fatal)."""
+    quality_flags = generate_quality_flags(
+        partition_result=state.partition_result,
+        fat_threshold_result=state.fat_threshold_result,
+        pericardium_result=state.pericardium_result,
+        cleanup_result=state.cleanup_result or _empty_cleanup_result(),
+        config=state.cfg,
+    )
+    logger.info(
+        "[%s] Step %d/%d: %d quality flag(s) generated",
+        _ts(), state.step, state.step_total, len(quality_flags),
+    )
+    state.quality_flags = quality_flags
+
+
+def _step_generate_dashboard(state: PipelineState) -> None:
+    """Generate QA dashboard (pipeline step 9, non-fatal)."""
+    dashboard_output = generate_dashboard(
+        ct_array=state.ct_array,
+        anchor_masks=state.anchor_masks,
+        pericardium_result=state.pericardium_result,
+        partition_result=state.partition_result,
+        fat_threshold_result=state.fat_threshold_result,
+        cleanup_result=state.cleanup_result or _empty_cleanup_result(),
+        quality_flags=state.quality_flags,
+        config=state.cfg,
+        patient_id=state.patient_id,
+        output_dir=state.patient_output_dir,
+        spacing=state.spacing,
+    )
+    logger.info(
+        "[%s] Step %d/%d: Dashboard saved to %s",
+        _ts(), state.step, state.step_total, state.patient_output_dir,
+    )
+    state.dashboard_output = dashboard_output
+
+
+def _step_save_la_fat_mask(state: PipelineState) -> None:
+    """Save LA fat mask as NIfTI (pipeline step 10, non-fatal)."""
+    la_fat_mask_path = os.path.join(state.patient_output_dir, "la_fat_mask.nii.gz")
+    if state.cleanup_result is not None:
+        os.makedirs(state.patient_output_dir, exist_ok=True)
+        nifti_io.save_nifti(
+            state.cleanup_result.cleaned_mask.astype(np.uint8),
+            la_fat_mask_path,
+            spacing=state.ct_spacing,
+            origin=state.ct_origin,
+            direction=state.ct_direction,
+        )
+        logger.info(
+            "[%s] Step %d/%d: LA fat mask saved to %s",
+            _ts(), state.step, state.step_total, la_fat_mask_path,
+        )
+    else:
+        state.warnings.append("LA fat mask not saved (cleanup result unavailable)")
+        logger.warning(
+            "[%s] Step %d/%d: Cleanup result unavailable, skipping mask save",
+            _ts(), state.step, state.step_total,
+        )
+
+
+def _step_save_quality_flags(state: PipelineState) -> None:
+    """Save quality flags as JSON (pipeline step 11, non-fatal)."""
+    quality_flags_path = os.path.join(
+        state.patient_output_dir, "quality_flags.json",
+    )
+    os.makedirs(state.patient_output_dir, exist_ok=True)
+    _save_quality_flags_json(state.quality_flags, quality_flags_path)
+    logger.info(
+        "[%s] Step %d/%d: Quality flags saved to %s",
+        _ts(), state.step, state.step_total, quality_flags_path,
+    )
+
+
+def _step_save_pipeline_result(state: PipelineState) -> None:
+    """Save PipelineResultData for dashboard consumption (pipeline step 12, non-fatal)."""
+    voxel_vol = voxel_volume_ml(state.spacing)
+    total_fat = (
+        state.partition_result.total_fat_volume_ml
+        if state.partition_result is not None
+        else 0.0
+    )
+    unassigned_vol = (
+        state.partition_result.unassigned_volume_ml
+        if state.partition_result is not None
+        else 0.0
+    )
+    result_data = PipelineResultData(
+        patient_id=state.patient_id,
+        la_fat_volume_ml=(
+            state.partition_result.anchor_volumes_ml.get("LA", 0.0)
+            if state.partition_result is not None
+            else 0.0
+        ),
+        total_fat_volume_ml=total_fat,
+        pericardium_volume_ml=(
+            state.pericardium_result.volume_ml
+            if state.pericardium_result is not None
+            else 0.0
+        ),
+        unassigned_volume_ml=unassigned_vol,
+        unassigned_fat_pct=(
+            (unassigned_vol / max(total_fat, 0.001)) * 100.0
+        ),
+        anchor_volumes_ml=(
+            state.partition_result.anchor_volumes_ml
+            if state.partition_result is not None
+            else {}
+        ),
+        quality_flags=[
+            {
+                "severity": f.severity,
+                "concern": f.concern,
+                "detail": f.detail,
+                "threshold_value": f.threshold_value,
+                "actual_value": f.actual_value,
+            }
+            for f in state.quality_flags
+        ],
+        fat_hu_range=(
+            (state.fat_threshold_result.hu_low, state.fat_threshold_result.hu_high)
+            if state.fat_threshold_result is not None
+            else (0.0, 0.0)
+        ),
+        voxel_volume_ml=voxel_vol,
+        excluded_anchors=(
+            list(state.partition_result.excluded_anchors)
+            if state.partition_result is not None
+            else []
+        ),
+        islands_removed=(
+            state.cleanup_result.islands_removed
+            if state.cleanup_result is not None
+            else 0
+        ),
+        total_removed_volume_mm3=(
+            state.cleanup_result.total_removed_volume_mm3
+            if state.cleanup_result is not None
+            else 0.0
+        ),
+        warnings=list(state.warnings),
+        errors=list(state.errors),
+    )
+    save_pipeline_result(result_data, state.patient_output_dir)
+    logger.info(
+        "[%s] Step %d/%d: PipelineResultData saved to %s",
+        _ts(), state.step, state.step_total,
+        os.path.join(state.patient_output_dir, "pipeline_result.json"),
+    )
+
+
 def _build_result(
     patient_id: str,
     start_time: float,
@@ -915,97 +865,3 @@ def _build_result(
     )
 
 
-def _configure_cli_logging() -> None:
-    """Configure logging for the CLI entry point."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=__import__("sys").stderr,
-    )
-
-
-def _print_cli_summary(result: PipelineResult) -> None:
-    """Print a human-readable summary of pipeline results to stdout."""
-    lines: list[str] = []
-    add = lines.append
-
-    add("=" * 56)
-    add(f"  LA FAT SEGMENTATION PIPELINE — {result.patient_id}")
-    add("=" * 56)
-    add("")
-
-    if result.success:
-        add("  Status:   SUCCESS")
-    else:
-        add("  Status:   FAILED  ({0} error(s))".format(len(result.errors)))
-    add("  Runtime:  {0:.1f} s".format(result.total_runtime_seconds))
-    add("")
-
-    if result.pericardium_result is not None:
-        add("  Pericardium:  {0}".format(result.pericardium_result.method))
-        if result.pericardium_result.fallback_triggered:
-            add("    (fallback: {0})".format(
-                result.pericardium_result.fallback_reason or "",
-            ))
-
-    if result.fat_threshold_result is not None:
-        add("  Fat range:    [{0:.1f}, {1:.1f}] HU  ({2})".format(
-            result.fat_threshold_result.hu_low,
-            result.fat_threshold_result.hu_high,
-            result.fat_threshold_result.method,
-        ))
-
-    if result.partition_result is not None:
-        la_vol = result.partition_result.anchor_volumes_ml.get("LA", 0.0)
-        total = result.partition_result.total_fat_volume_ml
-        unassigned = result.partition_result.unassigned_volume_ml
-        add("  LA Fat:       {0:.2f} ml  (total epicardial: {1:.2f} ml)".format(
-            la_vol, total,
-        ))
-        add("  Unassigned:   {0:.2f} ml".format(unassigned))
-        if result.partition_result.excluded_anchors:
-            add("  Excluded:     {0}".format(
-                ", ".join(result.partition_result.excluded_anchors),
-            ))
-
-    if result.cleanup_result is not None:
-        add("  Cleanup:      {0} island(s) removed ({1:.1f} mm³)".format(
-            result.cleanup_result.islands_removed,
-            result.cleanup_result.total_removed_volume_mm3,
-        ))
-
-    if result.mesh_paths is not None:
-        total_meshes = sum(len(files) for files in result.mesh_paths.values())
-        add("  Meshes:       {0} saved ({1} step(s))".format(
-            total_meshes, len(result.mesh_paths),
-        ))
-    else:
-        add("  Meshes:       not extracted")
-
-    if result.dashboard_output is not None:
-        add("  Dashboard:    {0}".format(result.dashboard_output.output_dir))
-
-    if result.quality_flags:
-        add("")
-        add("  Quality Flags:")
-        for flag in result.quality_flags:
-            add("    [{0}] {1}: {2}".format(
-                flag.severity, flag.concern, flag.detail,
-            ))
-
-    if result.errors:
-        add("")
-        add("  Errors:")
-        for err in result.errors:
-            add("    - {0}".format(err))
-
-    if result.warnings:
-        add("")
-        add("  Warnings:")
-        for warn in result.warnings:
-            add("    - {0}".format(warn))
-
-    add("")
-    add("=" * 56)
-
-    __import__("sys").stdout.write("\n".join(lines) + "\n")
