@@ -17,6 +17,8 @@ setup(
         "PyYAML",
         "nibabel",
         "pandas",
+        "panel",
+        "pyvista",
     ],
     python_requires=">=3.9",
     entry_points={

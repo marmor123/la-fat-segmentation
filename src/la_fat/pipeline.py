@@ -5,8 +5,6 @@ Wires all processing modules together into a single end-to-end
 :doc:`/docs/pipeline` for the detailed architecture.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import json
 import logging
@@ -20,6 +18,7 @@ import SimpleITK as sitk
 from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
 from la_fat.config import PipelineConfig
 from la_fat.fat_thresholder import FatThresholdResult, compute_fat_threshold
+from la_fat.mesh_extractor import extract_interactive_meshes
 from la_fat.partition_engine import PartitionResult, partition_fat
 from la_fat.pericardium_resolver import PericardiumResult, resolve_pericardium
 from la_fat.preprocessor import ResampleResult, resample_to_isotropic
@@ -117,6 +116,10 @@ class PipelineResult:
         Non-fatal warnings (e.g. fallback triggered, anchors excluded).
     total_runtime_seconds:
         Wall-clock duration of the full pipeline in seconds.
+    mesh_paths:
+        Mapping from step name (e.g. ``"step2_anchors"``) to list of
+        ``.ply`` file paths, or ``None`` if mesh extraction failed or
+        was skipped.
     """
 
     patient_id: str
@@ -130,6 +133,7 @@ class PipelineResult:
     errors: list[str]
     warnings: list[str]
     total_runtime_seconds: float
+    mesh_paths: dict[str, list[str]] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +158,10 @@ def run_fat_extraction_pipeline(
     6. Compute fat HU threshold (Gaussian fit or fallback).
     7. Partition epicardial fat to nearest anchor surface.
     8. Clean the LA fat mask (island removal).
-    9. Generate quality flags.
-    10. Generate QA dashboard.
-    11. Save LA fat mask and quality flags to output directory.
+    9. Extract meshes for interactive visualization.
+    10. Generate quality flags.
+    11. Generate QA dashboard.
+    12. Save LA fat mask and quality flags to output directory.
 
     Parameters
     ----------
@@ -184,9 +189,10 @@ def run_fat_extraction_pipeline(
     cleanup_result: CleanupResult | None = None
     quality_flags: list[QualityFlag] = []
     dashboard_output: DashboardOutput | None = None
+    mesh_paths: dict[str, list[str]] | None = None
 
     # ── Step 0: Configuration ───────────────────────────────────────────────
-    step_total = 11
+    step_total = 12
     step = 0
 
     try:
@@ -483,7 +489,53 @@ def run_fat_extraction_pipeline(
             )
             cleanup_result = None
 
-        # ── Step 7: Generate quality flags ────────────────────────────────
+        # ── Step 7: Extract meshes ────────────────────────────────────────
+        step += 1
+        logger.info(
+            "[%s] Step %d/%d: Extracting meshes for interactive visualization",
+            _ts(), step, step_total,
+        )
+
+        try:
+            pipeline_state_dict: dict[str, t.Any] = {
+                "anchor_masks": anchor_masks,
+                "pericardium_mask": pericardium_result.mask,
+                "partition_result": partition_result,
+                "cleanup_result": cleanup_result or _empty_cleanup_result(),
+                "spacing": spacing,
+            }
+            mesh_results = extract_interactive_meshes(
+                pipeline_state_dict, patient_output_dir,
+            )
+            mesh_paths = {}
+            for step_name, step_meshes in mesh_results.items():
+                ply_files = [
+                    os.path.join(
+                        patient_output_dir,
+                        "meshes",
+                        step_name,
+                        f"{sn}.ply",
+                    )
+                    for sn, md in step_meshes.items()
+                    if md is not None
+                ]
+                mesh_paths[step_name] = ply_files
+            total_meshes = sum(len(files) for files in mesh_paths.values())
+            logger.info(
+                "[%s] Step %d/%d: Mesh extraction complete — "
+                "%d meshes saved to %s/meshes",
+                _ts(), step, step_total,
+                total_meshes, patient_output_dir,
+            )
+        except Exception as exc:
+            errors.append(f"Mesh extraction failed: {exc}")
+            logger.error(
+                "[%s] Step %d/%d: %s",
+                _ts(), step, step_total, exc,
+            )
+            mesh_paths = None
+
+        # ── Step 8: Generate quality flags ────────────────────────────────
         step += 1
         logger.info(
             "[%s] Step %d/%d: Generating quality flags",
@@ -509,7 +561,7 @@ def run_fat_extraction_pipeline(
                 _ts(), step, step_total, exc,
             )
 
-        # ── Step 8: Generate QA dashboard ─────────────────────────────────
+        # ── Step 9: Generate QA dashboard ─────────────────────────────────
         step += 1
         logger.info(
             "[%s] Step %d/%d: Generating QA dashboard",
@@ -541,7 +593,7 @@ def run_fat_extraction_pipeline(
                 _ts(), step, step_total, exc,
             )
 
-        # ── Step 9: Save LA fat mask ──────────────────────────────────────
+        # ── Step 10: Save LA fat mask ─────────────────────────────────────
         step += 1
         logger.info(
             "[%s] Step %d/%d: Saving LA fat mask",
@@ -576,7 +628,7 @@ def run_fat_extraction_pipeline(
                 _ts(), step, step_total,
             )
 
-        # ── Step 10: Save quality flags as JSON ───────────────────────────
+        # ── Step 11: Save quality flags as JSON ───────────────────────────
         step += 1
         logger.info(
             "[%s] Step %d/%d: Saving quality flags",
@@ -629,6 +681,7 @@ def run_fat_extraction_pipeline(
         cleanup_result=cleanup_result,
         quality_flags=quality_flags,
         dashboard_output=dashboard_output,
+        mesh_paths=mesh_paths,
         errors=errors,
         warnings=warnings,
         total_runtime_seconds=total_runtime,
@@ -821,6 +874,7 @@ def _build_result(
     cleanup_result: CleanupResult | None = None,
     quality_flags: list[QualityFlag] | None = None,
     dashboard_output: DashboardOutput | None = None,
+    mesh_paths: dict[str, list[str]] | None = None,
 ) -> PipelineResult:
     """Build a ``PipelineResult`` with the accumulated state.
 
@@ -836,6 +890,7 @@ def _build_result(
         cleanup_result=cleanup_result,
         quality_flags=quality_flags or [],
         dashboard_output=dashboard_output,
+        mesh_paths=mesh_paths,
         errors=errors,
         warnings=warnings,
         total_runtime_seconds=total_runtime,
@@ -900,6 +955,14 @@ def _print_cli_summary(result: PipelineResult) -> None:
             result.cleanup_result.islands_removed,
             result.cleanup_result.total_removed_volume_mm3,
         ))
+
+    if result.mesh_paths is not None:
+        total_meshes = sum(len(files) for files in result.mesh_paths.values())
+        add("  Meshes:       {0} saved ({1} step(s))".format(
+            total_meshes, len(result.mesh_paths),
+        ))
+    else:
+        add("  Meshes:       not extracted")
 
     if result.dashboard_output is not None:
         add("  Dashboard:    {0}".format(result.dashboard_output.output_dir))

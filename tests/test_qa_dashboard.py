@@ -1,7 +1,7 @@
 """Tests for the la_fat.qa_dashboard module.
 
 Exercises the generation of the QA dashboard including slice gallery,
-fat overlay, numeric summary, 3D views, and combined HTML.
+fat overlay, numeric summary, and combined HTML.
 """
 
 from __future__ import annotations
@@ -223,13 +223,11 @@ class TestOutputDirectory:
 class TestAllOutputFilesExist:
     """All expected output files are created."""
 
-    def test_all_seven_files_exist(self, shared_dashboard):
+    def test_all_five_files_exist(self, shared_dashboard):
         paths = [
             shared_dashboard.slice_gallery_path,
             shared_dashboard.fat_overlay_path,
             shared_dashboard.summary_table_path,
-            shared_dashboard.view_3d_gif_path,
-            shared_dashboard.view_3d_html_path,
             shared_dashboard.summary_html_path,
         ]
         for path in paths:
@@ -332,10 +330,10 @@ class TestSummaryHTML:
             html = f.read()
         assert "Numeric Summary" in html
 
-    def test_has_3d_view_section(self, shared_dashboard):
+    def test_3d_view_section_removed(self, shared_dashboard):
         with open(shared_dashboard.summary_html_path) as f:
             html = f.read()
-        assert "3D View" in html
+        assert "3D View" not in html
 
     def test_has_patient_id_in_html(self, shared_dashboard):
         with open(shared_dashboard.summary_html_path) as f:
@@ -351,21 +349,7 @@ class TestSummaryHTML:
 
 
 # ===================================================================
-# 7. 3D GIF is not empty
-# ===================================================================
-
-
-class Test3DGif:
-    """3D animated GIF has reasonable file size."""
-
-    def test_gif_has_content(self, shared_dashboard):
-        size = os.path.getsize(shared_dashboard.view_3d_gif_path)
-        assert size > 1024, f"GIF too small: {size} bytes"
-
-
-# ===================================================================
-# 8. DashboardOutput dataclass
-# ===================================================================
+# 7. DashboardOutput dataclass
 
 
 class TestDashboardOutputDataclass:
@@ -377,16 +361,12 @@ class TestDashboardOutputDataclass:
             slice_gallery_path="/tmp/gallery.png",
             fat_overlay_path="/tmp/fat.png",
             summary_table_path="/tmp/summary.txt",
-            view_3d_gif_path="/tmp/3d.gif",
-            view_3d_html_path="/tmp/3d.html",
             summary_html_path="/tmp/dashboard.html",
         )
         assert isinstance(d.output_dir, str)
         assert isinstance(d.slice_gallery_path, str)
         assert isinstance(d.fat_overlay_path, str)
         assert isinstance(d.summary_table_path, str)
-        assert isinstance(d.view_3d_gif_path, str)
-        assert isinstance(d.view_3d_html_path, str)
         assert isinstance(d.summary_html_path, str)
 
     def test_frozen_immutable(self):
@@ -395,8 +375,6 @@ class TestDashboardOutputDataclass:
             slice_gallery_path="/tmp/gallery.png",
             fat_overlay_path="/tmp/fat.png",
             summary_table_path="/tmp/summary.txt",
-            view_3d_gif_path="/tmp/3d.gif",
-            view_3d_html_path="/tmp/3d.html",
             summary_html_path="/tmp/dashboard.html",
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -408,8 +386,6 @@ class TestDashboardOutputDataclass:
             slice_gallery_path="/tmp/gallery.png",
             fat_overlay_path="/tmp/fat.png",
             summary_table_path="/tmp/summary.txt",
-            view_3d_gif_path="/tmp/3d.gif",
-            view_3d_html_path="/tmp/3d.html",
             summary_html_path="/tmp/dashboard.html",
         )
         assert "DashboardOutput" in repr(d)
@@ -417,7 +393,7 @@ class TestDashboardOutputDataclass:
 
 
 # ===================================================================
-# 9. Handles empty fat mask
+# 8. Handles empty fat mask
 # ===================================================================
 
 
@@ -443,15 +419,11 @@ class TestEmptyFatMask:
     def test_no_crash_with_empty_fat(self, empty_fat_dashboard):
         assert os.path.isfile(empty_fat_dashboard.slice_gallery_path)
         assert os.path.isfile(empty_fat_dashboard.fat_overlay_path)
-        assert os.path.isfile(empty_fat_dashboard.view_3d_gif_path)
-
-    def test_empty_fat_gif_still_created(self, empty_fat_dashboard):
-        size = os.path.getsize(empty_fat_dashboard.view_3d_gif_path)
-        assert size > 500
+        assert os.path.isfile(empty_fat_dashboard.summary_html_path)
 
 
 # ===================================================================
-# 10. Handles excluded anchor
+# 9. Handles excluded anchor
 # ===================================================================
 
 

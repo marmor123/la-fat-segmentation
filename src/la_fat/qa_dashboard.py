@@ -1,7 +1,7 @@
 """QA Dashboard module for LA Fat Segmentation.
 
 Generates per-scan visual QA output including slice gallery, fat overlay,
-numeric summary, 3D views, and a combined self-contained HTML dashboard.
+numeric summary, and a combined self-contained HTML dashboard.
 """
 
 from __future__ import annotations
@@ -15,11 +15,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib import animation
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
 from scipy.ndimage import center_of_mass
-from skimage.measure import marching_cubes
 
 from la_fat.config import PipelineConfig
 from la_fat.cleanup import CleanupResult
@@ -33,7 +30,7 @@ from la_fat.quality_flagger import QualityFlag
 # ---------------------------------------------------------------------------
 
 # Consistent colors for the 6 Partition Anchors.
-# Used across slice gallery, fat overlay, and 3D views.
+# Used across slice gallery and fat overlay.
 ANCHOR_COLORS: dict[str, tuple[float, float, float]] = {
     "LA": (1.0, 0.0, 0.0),  # red
     "LV": (0.0, 0.0, 1.0),  # blue
@@ -75,10 +72,6 @@ class DashboardOutput:
         Path to the fat overlay PNG.
     summary_table_path:
         Path to the summary text file (TXT).
-    view_3d_gif_path:
-        Path to the 3D animated GIF.
-    view_3d_html_path:
-        Path to the 3D multi-angle static HTML fallback.
     summary_html_path:
         Path to the combined dashboard HTML file.
     """
@@ -87,8 +80,6 @@ class DashboardOutput:
     slice_gallery_path: str
     fat_overlay_path: str
     summary_table_path: str
-    view_3d_gif_path: str
-    view_3d_html_path: str
     summary_html_path: str
 
 
@@ -112,13 +103,11 @@ def generate_dashboard(
 ) -> DashboardOutput:
     """Generate the complete QA dashboard.
 
-    Produces 7 output artifacts in *output_dir*:
+    Produces 4 output artifacts in *output_dir*:
       1. ``slice_gallery.png`` — 3-plane multi-anchor overlay
       2. ``fat_overlay.png`` — 3-plane color-coded fat overlay
       3. ``summary.txt`` + ``summary.csv`` — numeric tables
-      4. ``view_3d.gif`` — auto-rotating 3D animation
-      5. ``view_3d.html`` — multi-angle static 3D HTML fallback
-      6. ``dashboard.html`` — combined self-contained HTML page
+      4. ``dashboard.html`` — combined self-contained HTML page
 
     Returns
     -------
@@ -171,29 +160,13 @@ def generate_dashboard(
         spacing=spacing,
     )
 
-    # ---- Component 4: 3D Views -----------------------------------------------
-    gif_path = os.path.join(output_dir, "view_3d.gif")
-    html_3d_path = os.path.join(output_dir, "view_3d.html")
-    angle_paths = _build_3d_views(
-        la_mask=anchor_masks.get("LA"),
-        pericardium_mask=pericardium_result.mask,
-        fat_mask=cleanup_result.cleaned_mask,
-        excluded=excluded,
-        gif_path=gif_path,
-        html_3d_path=html_3d_path,
-        angle_dir=output_dir,
-        spacing=spacing,
-    )
-
-    # ---- Component 5: Combined HTML ------------------------------------------
+    # ---- Component 4: Combined HTML ------------------------------------------
     combined_path = os.path.join(output_dir, "dashboard.html")
     _build_combined_html(
         patient_id=patient_id,
         gallery_rel=os.path.basename(gallery_path),
         fat_overlay_rel=os.path.basename(fat_overlay_path),
         summary_path=summary_path,
-        gif_rel=os.path.basename(gif_path),
-        angle_paths_rel=[os.path.basename(p) for p in angle_paths],
         save_path=combined_path,
     )
 
@@ -202,8 +175,6 @@ def generate_dashboard(
         slice_gallery_path=gallery_path,
         fat_overlay_path=fat_overlay_path,
         summary_table_path=summary_path,
-        view_3d_gif_path=gif_path,
-        view_3d_html_path=html_3d_path,
         summary_html_path=combined_path,
     )
 
@@ -249,7 +220,7 @@ def _build_slice_gallery(
     excluded: set[str],
     save_path: str,
 ) -> None:
-    """Create a 3×2 matplotlib figure: CT alone | CT + overlays."""
+    """Create a 3x2 matplotlib figure: CT alone | CT + overlays."""
     fig, axes = plt.subplots(3, 2, figsize=(16, 10))
 
     planes = [
@@ -265,13 +236,13 @@ def _build_slice_gallery(
         # Left: CT alone
         ax_left = axes[row_idx, 0]
         ax_left.imshow(ct_slice, cmap="gray", aspect="auto")
-        ax_left.set_title(f"{plane_name} — CT", fontsize=10)
+        ax_left.set_title(f"{plane_name} -- CT", fontsize=10)
         ax_left.axis("off")
 
         # Right: CT + overlays
         ax_right = axes[row_idx, 1]
         ax_right.imshow(ct_slice, cmap="gray", aspect="auto")
-        ax_right.set_title(f"{plane_name} — Overlay", fontsize=10)
+        ax_right.set_title(f"{plane_name} -- Overlay", fontsize=10)
         ax_right.axis("off")
 
         # Pericardium outline (dashed cyan)
@@ -320,10 +291,10 @@ def _build_fat_overlay(
     excluded: set[str],
     save_path: str,
 ) -> None:
-    """Create a 3×2 figure: CT alone | CT + fat color-coded by anchor."""
+    """Create a 3x2 figure: CT alone | CT + fat color-coded by anchor."""
     fig, axes = plt.subplots(3, 2, figsize=(16, 10))
 
-    # Build label→color mapping for integer labels 1..6.
+    # Build label->color mapping for integer labels 1..6.
     label_to_color: dict[int, tuple[float, float, float]] = {}
     for idx, name in enumerate(_CANONICAL_ANCHORS, start=1):
         if name in excluded:
@@ -347,13 +318,13 @@ def _build_fat_overlay(
         # Left: CT alone
         ax_left = axes[row_idx, 0]
         ax_left.imshow(ct_slice, cmap="gray", aspect="auto")
-        ax_left.set_title(f"{plane_name} — CT", fontsize=10)
+        ax_left.set_title(f"{plane_name} -- CT", fontsize=10)
         ax_left.axis("off")
 
         # Right: CT + fat overlay
         ax_right = axes[row_idx, 1]
         ax_right.imshow(ct_slice, cmap="gray", aspect="auto")
-        ax_right.set_title(f"{plane_name} — Fat", fontsize=10)
+        ax_right.set_title(f"{plane_name} -- Fat", fontsize=10)
         ax_right.axis("off")
 
         # Build RGBA overlay for fat voxels
@@ -380,7 +351,7 @@ def _build_fat_overlay(
                 overlay[mask_2d, 2] = color[2]
                 overlay[mask_2d, 3] = 0.65
 
-        # Unassigned fat: label == 0 but in all_fat_mask → gray
+        # Unassigned fat: label == 0 but in all_fat_mask -> gray
         unassigned_mask = (assign_slice == 0) & fat_slice
         if np.any(unassigned_mask):
             overlay[unassigned_mask, 0] = UNASSIGNED_FAT_COLOR[0]
@@ -421,7 +392,7 @@ def _build_numeric_summary(
         partition_result.unassigned_volume_ml / total * 100.0
     )
 
-    # ── Build text lines ─────────────────────────────────────────────────
+    # -- Build text lines --------------------------------------------------
     lines: list[str] = []
     _add = lines.append
 
@@ -519,7 +490,7 @@ def _build_numeric_summary(
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
-    # ── Write CSV ────────────────────────────────────────────────────────
+    # -- Write CSV ---------------------------------------------------------
     csv_rows: list[list[str]] = []
     _cr = csv_rows.append
     _cr(["Category", "Key", "Value"])
@@ -612,255 +583,7 @@ def _build_numeric_summary(
         writer.writerows(csv_rows)
 
 
-# ---- Component 4: 3D Views ---------------------------------------------
-
-
-def _extract_surfaces(
-    la_mask: np.ndarray | None,
-    pericardium_mask: np.ndarray,
-    fat_mask: np.ndarray,
-    spacing: tuple[float, float, float],
-) -> dict[str, tuple[np.ndarray, np.ndarray] | None]:
-    """Extract (verts, faces) meshes via marching cubes for each structure.
-
-    Returns a dict keyed by structure name; each value is ``(verts, faces)``
-    or ``None`` if the mask is empty or extraction fails.
-    """
-    surfaces: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
-
-    # LA chamber
-    if la_mask is not None and np.any(la_mask):
-        try:
-            verts, faces, _, _ = marching_cubes(
-                la_mask.astype(float), level=0.5, spacing=spacing
-            )
-            surfaces["LA"] = (verts, faces)
-        except (ValueError, RuntimeError):
-            surfaces["LA"] = None
-    else:
-        surfaces["LA"] = None
-
-    # Pericardium
-    if np.any(pericardium_mask):
-        try:
-            verts, faces, _, _ = marching_cubes(
-                pericardium_mask.astype(float),
-                level=0.5,
-                spacing=spacing,
-            )
-            surfaces["Pericardium"] = (verts, faces)
-        except (ValueError, RuntimeError):
-            surfaces["Pericardium"] = None
-    else:
-        surfaces["Pericardium"] = None
-
-    # LA Fat
-    if np.any(fat_mask):
-        try:
-            verts, faces, _, _ = marching_cubes(
-                fat_mask.astype(float), level=0.5, spacing=spacing
-            )
-            surfaces["Fat"] = (verts, faces)
-        except (ValueError, RuntimeError):
-            surfaces["Fat"] = None
-    else:
-        surfaces["Fat"] = None
-
-    return surfaces
-
-
-def _render_3d_plot(
-    surfaces: dict[str, tuple[np.ndarray, np.ndarray] | None],
-    shape: tuple[int, ...],
-    spacing: tuple[float, float, float],
-    elev: float = 20.0,
-    azim: float = 30.0,
-) -> plt.Figure:
-    """Render a single 3D view of the extracted surfaces."""
-    fig = plt.figure(figsize=(5, 5))
-    ax = fig.add_subplot(111, projection="3d")
-
-    any_mesh = False
-
-    # LA chamber (red, semi-transparent)
-    if surfaces.get("LA") is not None:
-        verts, faces = surfaces["LA"]
-        mesh = Poly3DCollection(
-            verts[faces],
-            alpha=0.5,
-            color=ANCHOR_COLORS["LA"],
-            label="LA",
-        )
-        ax.add_collection3d(mesh)
-        any_mesh = True
-
-    # Pericardium (cyan, mostly transparent, wireframe)
-    if surfaces.get("Pericardium") is not None:
-        verts, faces = surfaces["Pericardium"]
-        mesh = Poly3DCollection(
-            verts[faces],
-            alpha=0.1,
-            facecolors=PERICARDIUM_COLOR,
-            linewidth=0.3,
-            edgecolors=PERICARDIUM_COLOR,
-            label="Pericardium",
-        )
-        ax.add_collection3d(mesh)
-        any_mesh = True
-
-    # LA Fat (gold, solid)
-    if surfaces.get("Fat") is not None:
-        verts, faces = surfaces["Fat"]
-        mesh = Poly3DCollection(
-            verts[faces],
-            alpha=0.85,
-            color=LA_FAT_COLOR_3D,
-            label="LA Fat",
-        )
-        ax.add_collection3d(mesh)
-        any_mesh = True
-
-    if any_mesh:
-        # Determine bounds from volume shape
-        sx, sy, sz = spacing
-        d0, d1, d2 = shape
-        ax.set_xlim(0, d2 * sx)
-        ax.set_ylim(0, d1 * sy)
-        ax.set_zlim(0, d0 * sz)
-        ax.set_xlabel("x (mm)")
-        ax.set_ylabel("y (mm)")
-        ax.set_zlabel("z (mm)")
-        ax.legend(loc="upper right", fontsize=8)
-    else:
-        ax.text(
-            0.5,
-            0.5,
-            0.5,
-            "No surfaces to render",
-            transform=ax.transAxes,
-            ha="center",
-            va="center",
-            fontsize=14,
-        )
-
-    ax.view_init(elev=elev, azim=azim)
-    plt.tight_layout()
-    return fig
-
-
-def _build_3d_views(
-    la_mask: np.ndarray | None,
-    pericardium_mask: np.ndarray,
-    fat_mask: np.ndarray,
-    excluded: set[str],
-    gif_path: str,
-    html_3d_path: str,
-    angle_dir: str,
-    spacing: tuple[float, float, float],
-) -> list[str]:
-    """Generate 3D views: animated GIF + multi-angle static HTML.
-
-    Returns a list of paths to angle PNG images used by the HTML fallback.
-    """
-    # Infer volume shape from largest mask.
-    shapes = []
-    if la_mask is not None:
-        shapes.append(la_mask.shape)
-    shapes.append(pericardium_mask.shape)
-    shapes.append(fat_mask.shape)
-    vol_shape = max(shapes, key=lambda s: s[0] * s[1] * s[2])
-
-    # Extract surface meshes once.
-    surfaces = _extract_surfaces(la_mask, pericardium_mask, fat_mask, spacing)
-
-    # ── Animated GIF ─────────────────────────────────────────────────────
-    fig = _render_3d_plot(surfaces, vol_shape, spacing, elev=20, azim=0)
-
-    def animate(frame: int) -> list[plt.Artist]:
-        ax = fig.axes[0]
-        ax.view_init(elev=20, azim=frame * 30)
-        return []
-
-    try:
-        ani = animation.FuncAnimation(
-            fig, animate, frames=12, interval=200, blit=False
-        )
-        ani.save(gif_path, writer="pillow", fps=5)
-    except Exception:
-        # If GIF generation fails, save a single frame as fallback.
-        fig.savefig(gif_path.replace(".gif", ".png"), dpi=100)
-    finally:
-        plt.close(fig)
-
-    # ── Multi-angle static images ────────────────────────────────────────
-    angle_paths: list[str] = []
-    for angle in [0, 90, 180, 270]:
-        fig_angle = _render_3d_plot(
-            surfaces, vol_shape, spacing, elev=20, azim=float(angle)
-        )
-        angle_path = os.path.join(angle_dir, f"view_angle_{angle}.png")
-        fig_angle.savefig(angle_path, dpi=80, bbox_inches="tight")
-        plt.close(fig_angle)
-        angle_paths.append(angle_path)
-
-    # ── 3D HTML fallback page ────────────────────────────────────────────
-    _build_3d_html(html_3d_path, gif_path, angle_dir, angle_paths)
-
-    return angle_paths
-
-
-def _build_3d_html(
-    html_3d_path: str,
-    gif_path: str,
-    angle_dir: str,
-    angle_paths: list[str],
-) -> None:
-    """Write a simple static HTML page showing the 3D GIF + multi-angle PNGs."""
-    gif_rel = os.path.basename(gif_path)
-    angle_rels = [os.path.basename(p) for p in angle_paths]
-    angle_labels = ["Front (0°)", "Right (90°)", "Back (180°)", "Left (270°)"]
-
-    angle_rows = "".join(
-        f'    <div class="angle-item">'
-        f'<img src="{rel}" alt="{label}">'
-        f"<p>{label}</p></div>\n"
-        for rel, label in zip(angle_rels, angle_labels)
-    )
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>3D View — Multi-Angle</title>
-<style>
-  body {{ font-family: sans-serif; margin: 20px; background: #f5f5f5; }}
-  h1 {{ color: #333; }}
-  .gif-container {{ text-align: center; margin: 20px 0; }}
-  .gif-container img {{ max-width: 100%; border: 1px solid #ccc; border-radius: 4px; }}
-  .angle-grid {{ display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }}
-  .angle-item {{ text-align: center; }}
-  .angle-item img {{ max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px; }}
-  .angle-item p {{ margin: 4px 0; font-size: 14px; color: #555; }}
-</style>
-</head>
-<body>
-<h1>3D View — LA, Pericardium, and LA Fat</h1>
-<div class="gif-container">
-  <img src="{gif_rel}" alt="3D Rotating View">
-  <p>Auto-rotating (36 frames, 10° steps)</p>
-</div>
-<h2>Multi-Angle Views</h2>
-<div class="angle-grid">
-{angle_rows}
-</div>
-</body>
-</html>"""
-
-    with open(html_3d_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-
-# ---- Component 5: Combined HTML ----------------------------------------
+# ---- Component 4: Combined HTML ----------------------------------------
 
 
 def _build_combined_html(
@@ -868,13 +591,11 @@ def _build_combined_html(
     gallery_rel: str,
     fat_overlay_rel: str,
     summary_path: str,
-    gif_rel: str,
-    angle_paths_rel: list[str],
     save_path: str,
 ) -> None:
     """Write a self-contained combined dashboard HTML page.
 
-    All image references are relative paths — the page is meant to be
+    All image references are relative paths -- the page is meant to be
     viewed from the dashboard output directory.
     """
     # Read the summary text for embedding into a <pre> block.
@@ -884,20 +605,12 @@ def _build_combined_html(
     except Exception:
         summary_text = "(summary not available)"
 
-    angle_labels = ["Front (0°)", "Right (90°)", "Back (180°)", "Left (270°)"]
-    angle_rows = "".join(
-        f'      <div class="angle-item">'
-        f'<img src="{rel}" alt="{label}">'
-        f"<p>{label}</p></div>\n"
-        for rel, label in zip(angle_paths_rel, angle_labels)
-    )
-
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QA Dashboard — {patient_id}</title>
+<title>QA Dashboard -- {patient_id}</title>
 <style>
   * {{ box-sizing: border-box; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #fafafa; color: #333; }}
@@ -906,11 +619,6 @@ def _build_combined_html(
   .section {{ background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; margin: 16px 0; }}
   img {{ max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; }}
   pre {{ background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; line-height: 1.5; }}
-  .gif-container {{ text-align: center; margin: 16px 0; }}
-  .angle-grid {{ display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }}
-  .angle-item {{ text-align: center; flex: 1 1 200px; }}
-  .angle-item img {{ max-width: 100%; }}
-  .angle-item p {{ margin: 4px 0; font-size: 13px; color: #666; }}
   table {{ border-collapse: collapse; width: 100%; }}
   th, td {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; }}
   th {{ background: #f0f0f0; }}
@@ -918,7 +626,7 @@ def _build_combined_html(
 </style>
 </head>
 <body>
-<h1>QA Dashboard — {patient_id}</h1>
+<h1>QA Dashboard -- {patient_id}</h1>
 
 <div class="section">
   <h2>1. Slice Gallery</h2>
@@ -937,19 +645,6 @@ def _build_combined_html(
 <div class="section">
   <h2>3. Numeric Summary</h2>
   <pre>{summary_text}</pre>
-</div>
-
-<div class="section">
-  <h2>4. 3D View</h2>
-  <p>LA chamber (red), Pericardium (cyan), and LA Fat (gold).</p>
-  <div class="gif-container">
-    <img src="{gif_rel}" alt="3D Rotating View">
-    <p>Auto-rotating animation</p>
-  </div>
-  <h3>Multi-Angle Views</h3>
-  <div class="angle-grid">
-{angle_rows}
-  </div>
 </div>
 
 <div class="footer">

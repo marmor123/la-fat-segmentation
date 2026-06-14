@@ -6,6 +6,7 @@ using synthetic NIfTI data written to a temporary directory.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import subprocess
@@ -504,6 +505,84 @@ class TestPipelineErrorHandling:
 
         # This is the key assertion: it should return a PipelineResult, not raise
         assert isinstance(result, PipelineResult)
+        assert not result.success
+
+
+class TestMeshExtraction:
+    """Tests for the mesh extraction pipeline step."""
+
+    def test_mesh_paths_in_result(self):
+        """Verify PipelineResult has mesh_paths field with default None."""
+        result = PipelineResult(
+            patient_id="test",
+            success=True,
+            partition_result=None,
+            fat_threshold_result=None,
+            pericardium_result=None,
+            cleanup_result=None,
+            quality_flags=[],
+            dashboard_output=None,
+            errors=[],
+            warnings=[],
+            total_runtime_seconds=0.0,
+        )
+        assert hasattr(result, "mesh_paths")
+        assert result.mesh_paths is None
+
+    def test_mesh_extraction_step_creates_mesh_dirs(self, tmp_path):
+        """Running the full pipeline creates mesh directories with .ply files."""
+        patient_id = "MESHTEST"
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        config = _make_config(data_dir, output_dir)
+
+        _create_full_synthetic_dataset(data_dir, patient_id)
+        result = run_fat_extraction_pipeline(patient_id, config=config)
+
+        assert result.success, f"Pipeline failed: {result.errors}"
+        assert result.mesh_paths is not None
+
+        meshes_root = os.path.join(output_dir, patient_id, "meshes")
+        assert os.path.isdir(os.path.join(meshes_root, "step2_anchors"))
+        assert os.path.isdir(os.path.join(meshes_root, "step5_partition"))
+        assert os.path.isdir(os.path.join(meshes_root, "step7_final"))
+
+        # Verify .ply files exist in each subdirectory
+        step2_plys = glob.glob(os.path.join(meshes_root, "step2_anchors", "*.ply"))
+        assert len(step2_plys) > 0
+        step5_plys = glob.glob(os.path.join(meshes_root, "step5_partition", "*.ply"))
+        assert len(step5_plys) > 0
+        step7_plys = glob.glob(os.path.join(meshes_root, "step7_final", "*.ply"))
+        assert len(step7_plys) > 0
+
+    def test_pipeline_succeeds_when_mesh_extraction_fails(self, tmp_path, monkeypatch):
+        """Pipeline continues gracefully if mesh extraction raises an exception."""
+        def failing_extract(*args, **kwargs):
+            raise RuntimeError("Simulated mesh extraction failure")
+
+        monkeypatch.setattr(
+            "la_fat.pipeline.extract_interactive_meshes",
+            failing_extract,
+        )
+
+        patient_id = "FAILMESH"
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        config = _make_config(data_dir, output_dir)
+
+        _create_full_synthetic_dataset(data_dir, patient_id)
+        result = run_fat_extraction_pipeline(patient_id, config=config)
+
+        # Pipeline did NOT crash — returns PipelineResult
+        assert isinstance(result, PipelineResult)
+        # mesh_paths is None since extraction failed
+        assert result.mesh_paths is None
+        # The mesh extraction error is recorded
+        mesh_errors = [e for e in result.errors if "Mesh extraction" in e]
+        assert len(mesh_errors) > 0
+        # Pipeline continued to later steps (dashboard, flag saving)
+        assert result.dashboard_output is not None
+        # success=False because errors list is non-empty
         assert not result.success
 
 
