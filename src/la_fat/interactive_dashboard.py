@@ -567,7 +567,7 @@ def _build_step2_viewport(patient_dir: str) -> pn.Column:  # type: ignore[return
             "Step 2 — Anchors + Pericardium not available: meshes directory not found",
         )
 
-    from la_fat.qa_dashboard import ANCHOR_COLORS, PERICARDIUM_COLOR
+    from la_fat.anatomy import ANCHOR_COLORS, PERICARDIUM_COLOR
 
     surface_specs: dict[str, dict[str, t.Any]] = {}
     for name, color in ANCHOR_COLORS.items():
@@ -637,7 +637,7 @@ def _build_step5_viewport(patient_dir: str) -> pn.Column:  # type: ignore[return
             "Step 5 — Fat Partition not available: meshes directory not found",
         )
 
-    from la_fat.qa_dashboard import ANCHOR_COLORS, PERICARDIUM_COLOR
+    from la_fat.anatomy import ANCHOR_COLORS, PERICARDIUM_COLOR
 
     surface_specs: dict[str, dict[str, t.Any]] = {}
     for name, color in ANCHOR_COLORS.items():
@@ -711,7 +711,7 @@ def _build_step7_viewport(patient_dir: str) -> pn.Column:  # type: ignore[return
             "Step 7 — Final LA Fat not available: meshes directory not found",
         )
 
-    from la_fat.qa_dashboard import ANCHOR_COLORS, LA_FAT_COLOR_3D, PERICARDIUM_COLOR
+    from la_fat.anatomy import ANCHOR_COLORS, LA_FAT_COLOR_3D, PERICARDIUM_COLOR
 
     surface_specs: dict[str, dict[str, t.Any]] = {
         "LA_chamber": {

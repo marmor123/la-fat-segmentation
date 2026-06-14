@@ -13,28 +13,12 @@ import numpy as np
 import SimpleITK as sitk
 from skimage.measure import marching_cubes
 
+from la_fat.anatomy import CANONICAL_ANCHORS
+
 __all__ = [
     "extract_meshes_for_step",
     "extract_interactive_meshes",
 ]
-
-# Canonical order and label mapping (mirrors partition_engine).
-_CANONICAL_ANCHORS: list[str] = [
-    "LA",
-    "LV",
-    "RA",
-    "RV",
-    "Aorta",
-    "Pulmonary_Artery",
-]
-_ANCHOR_LABELS: dict[str, int] = {
-    "LA": 1,
-    "LV": 2,
-    "RA": 3,
-    "RV": 4,
-    "Aorta": 5,
-    "Pulmonary_Artery": 6,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +106,7 @@ def extract_interactive_meshes(
 
     # ---- Step 2: Anchors (segmented cardiac structures) ---------------------
     step2_masks: dict[str, np.ndarray] = {}
-    for name in _CANONICAL_ANCHORS:
+    for name in CANONICAL_ANCHORS:
         if name in anchor_masks:
             step2_masks[name] = anchor_masks[name]
     step2_masks["Pericardium"] = pericardium_mask
@@ -137,7 +121,8 @@ def extract_interactive_meshes(
     all_fat_mask: np.ndarray = partition_result.all_fat_mask
 
     step5_masks: dict[str, np.ndarray] = {}
-    for anchor_name, label in _ANCHOR_LABELS.items():
+    anchor_labels = {name: idx + 1 for idx, name in enumerate(CANONICAL_ANCHORS)}
+    for anchor_name, label in anchor_labels.items():
         fat_for_anchor = all_fat_mask & (anchor_assignments == label)
         step5_masks[anchor_name] = fat_for_anchor
     step5_masks["Pericardium"] = pericardium_mask

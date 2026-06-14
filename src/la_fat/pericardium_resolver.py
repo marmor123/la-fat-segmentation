@@ -15,6 +15,7 @@ import numpy as np
 from scipy.ndimage import binary_dilation
 from scipy.spatial import ConvexHull
 
+from la_fat.anatomy import voxel_volume_ml
 from la_fat.config import PipelineConfig
 
 
@@ -79,13 +80,13 @@ def resolve_pericardium(
         If no pericardium can be produced (all chamber masks are
         missing or empty).
     """
-    voxel_volume_ml = spacing[0] * spacing[1] * spacing[2] / 1000.0
+    vox_vol_ml = voxel_volume_ml(spacing)
     chamber_keys = ["LA", "LV", "RA", "RV", "Aorta"]
 
     # ---- Normal path: use TS pericardium directly ----
     if "pericardium" in ts_masks:
         peri = ts_masks["pericardium"]
-        volume_ml = np.count_nonzero(peri) * voxel_volume_ml
+        volume_ml = np.count_nonzero(peri) * vox_vol_ml
         if volume_ml >= config.min_pericardium_volume_ml:
             return PericardiumResult(
                 mask=peri.astype(bool),
@@ -182,7 +183,7 @@ def resolve_pericardium(
             f" (chambers used: {', '.join(used_keys)})"
         )
 
-    fallback_volume_ml = float(np.count_nonzero(dilated) * voxel_volume_ml)
+    fallback_volume_ml = float(np.count_nonzero(dilated) * vox_vol_ml)
     return PericardiumResult(
         mask=dilated,
         fallback_triggered=True,

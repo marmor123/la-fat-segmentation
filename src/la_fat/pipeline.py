@@ -15,6 +15,7 @@ import typing as t
 import numpy as np
 import SimpleITK as sitk
 
+from la_fat.anatomy import CANONICAL_ANCHORS, TS_NATIVE_FILENAMES as _ANATOMY_TS_NATIVE
 from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
 from la_fat.config import PipelineConfig
 from la_fat.fat_thresholder import FatThresholdResult, compute_fat_threshold
@@ -40,42 +41,28 @@ logger = logging.getLogger(__name__)
 #: The TS runner saves::
 #:     <intermediate_dir>/<patient_id>/<patient_id>_<stem>.nii.gz
 _STRUCTURE_FILENAMES: dict[str, str] = {
-    "LA": "LA",
-    "LV": "LV",
-    "RA": "RA",
-    "RV": "RV",
-    "Aorta": "Aorta",
-    "Pulmonary_Artery": "Pulmonary Artery",
+    name: name.replace("_", " ") if "_" in name else name
+    for name in CANONICAL_ANCHORS
+}
+_STRUCTURE_FILENAMES.update({
     "Pericardium": "Pericardium",
     "Pulmonary_Veins": "Pulmonary Veins",
-}
+})
 
 #: Fallback mapping from internal structure names to TotalSegmentator's
 #: native output filenames (no patient_id prefix, e.g. "heart_atrium_left").
 #: Used to load masks produced by older TS runs that predate the rebuild.
-_TS_NATIVE_FILENAMES: dict[str, str] = {
-    "LA": "heart_atrium_left",
-    "LV": "heart_ventricle_left",
-    "RA": "heart_atrium_right",
-    "RV": "heart_ventricle_right",
-    "Aorta": "aorta",
-    "Pulmonary_Artery": "pulmonary_artery",
+_TS_NATIVE_FILENAMES: dict[str, str] = dict(_ANATOMY_TS_NATIVE)
+_TS_NATIVE_FILENAMES.update({
     "Pericardium": "pericardium",
     "Pulmonary_Veins": "pulmonary_vein",
-}
+})
 
-#: Chamber keys expected by the pericardium resolver.
-_CHAMBER_KEYS: list[str] = ["LA", "LV", "RA", "RV", "Aorta"]
+#: Chamber keys expected by the pericardium resolver (all 6 Partition Anchors).
+_CHAMBER_KEYS: list[str] = list(CANONICAL_ANCHORS)
 
 #: Six canonical Partition Anchors expected by the partition engine.
-_ANCHOR_KEYS: list[str] = [
-    "LA",
-    "LV",
-    "RA",
-    "RV",
-    "Aorta",
-    "Pulmonary_Artery",
-]
+_ANCHOR_KEYS: list[str] = list(CANONICAL_ANCHORS)
 
 #: Name of the pre-resampled CT cache file (relative to patient dir).
 _RESAMPLED_CT_FILENAME = "{patient_id}_ct_resampled.nii.gz"

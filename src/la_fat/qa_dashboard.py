@@ -18,6 +18,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import center_of_mass
 
+from la_fat.anatomy import (
+    ANCHOR_COLORS,
+    CANONICAL_ANCHORS,
+    LA_FAT_COLOR_3D,
+    PERICARDIUM_COLOR,
+    voxel_volume_ml,
+)
 from la_fat.config import PipelineConfig
 from la_fat.cleanup import CleanupResult
 from la_fat.fat_thresholder import FatThresholdResult
@@ -29,29 +36,8 @@ from la_fat.quality_flagger import QualityFlag
 # Constants
 # ---------------------------------------------------------------------------
 
-# Consistent colors for the 6 Partition Anchors.
-# Used across slice gallery and fat overlay.
-ANCHOR_COLORS: dict[str, tuple[float, float, float]] = {
-    "LA": (1.0, 0.0, 0.0),  # red
-    "LV": (0.0, 0.0, 1.0),  # blue
-    "RA": (0.0, 0.8, 0.0),  # green
-    "RV": (1.0, 0.65, 0.0),  # orange
-    "Aorta": (1.0, 1.0, 0.0),  # yellow
-    "Pulmonary_Artery": (0.6, 0.0, 0.6),  # purple
-}
-PERICARDIUM_COLOR: tuple[float, float, float] = (0.0, 0.75, 0.75)  # cyan
-LA_FAT_COLOR_3D: tuple[float, float, float] = (1.0, 0.84, 0.0)  # gold
+# Dashboard-specific colour (not part of the anatomy module).
 UNASSIGNED_FAT_COLOR: tuple[float, float, float] = (0.7, 0.7, 0.7)  # gray
-
-# Canonical order of Partition Anchors (1-indexed labels).
-_CANONICAL_ANCHORS: list[str] = [
-    "LA",
-    "LV",
-    "RA",
-    "RV",
-    "Aorta",
-    "Pulmonary_Artery",
-]
 
 # ---------------------------------------------------------------------------
 # Dashboard output dataclass
@@ -257,7 +243,7 @@ def _build_slice_gallery(
             )
 
         # Each anchor outline
-        for anchor_name in _CANONICAL_ANCHORS:
+        for anchor_name in CANONICAL_ANCHORS:
             if anchor_name in excluded or anchor_name not in anchor_masks:
                 continue
             anchor_slice = _extract_slice(
@@ -296,7 +282,7 @@ def _build_fat_overlay(
 
     # Build label->color mapping for integer labels 1..6.
     label_to_color: dict[int, tuple[float, float, float]] = {}
-    for idx, name in enumerate(_CANONICAL_ANCHORS, start=1):
+    for idx, name in enumerate(CANONICAL_ANCHORS, start=1):
         if name in excluded:
             # Excluded anchors shown as dark gray (should not appear if
             # excluded, but guard against unexpected assignments).
@@ -382,9 +368,9 @@ def _build_numeric_summary(
 ) -> None:
     """Write a human-readable TXT summary and a machine-readable CSV."""
 
-    voxel_volume_ml = spacing[0] * spacing[1] * spacing[2] / 1000.0
+    voxel_vol_ml = voxel_volume_ml(spacing)
     pericardium_volume_ml = (
-        np.count_nonzero(pericardium_result.mask) * voxel_volume_ml
+        np.count_nonzero(pericardium_result.mask) * voxel_vol_ml
     )
 
     total = max(partition_result.total_fat_volume_ml, 0.001)
@@ -427,7 +413,7 @@ def _build_numeric_summary(
     _add("--- Per-Anchor Volumes ---")
     _add(f"  {'Anchor':<20} {'Volume (ml)':<15} {'Share (%)':<10}")
     _add(f"  {'-'*20} {'-'*15} {'-'*10}")
-    for anchor_name in _CANONICAL_ANCHORS:
+    for anchor_name in CANONICAL_ANCHORS:
         vol = partition_result.anchor_volumes_ml.get(anchor_name, 0.0)
         share = partition_result.anchor_shares.get(anchor_name, 0.0)
         _add(f"  {anchor_name:<20} {vol:<15.2f} {share:<10.1f}")
@@ -533,7 +519,7 @@ def _build_numeric_summary(
         ]
     )
 
-    for anchor_name in _CANONICAL_ANCHORS:
+    for anchor_name in CANONICAL_ANCHORS:
         vol = partition_result.anchor_volumes_ml.get(anchor_name, 0.0)
         share = partition_result.anchor_shares.get(anchor_name, 0.0)
         _cr([anchor_name, "volume_ml", f"{vol:.2f}"])

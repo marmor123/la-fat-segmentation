@@ -24,18 +24,8 @@ import numpy as np
 from scipy.ndimage import binary_erosion
 from scipy.ndimage import distance_transform_edt
 
+from la_fat.anatomy import CANONICAL_ANCHORS, voxel_volume_ml
 from la_fat.config import PipelineConfig
-
-# The six canonical Partition Anchors.
-# The order defines the integer labels used in the anchor_assignments map.
-_CANONICAL_ANCHORS: list[str] = [
-    "LA",
-    "LV",
-    "RA",
-    "RV",
-    "Aorta",
-    "Pulmonary_Artery",
-]
 
 # 6-connectivity structuring element for surface extraction.
 # A voxel is on the surface if it has at least one zero-valued face
@@ -127,7 +117,7 @@ def partition_fat(
     ValueError
         If fewer than 2 valid anchors remain after filtering.
     """
-    voxel_volume_ml = spacing[0] * spacing[1] * spacing[2] / 1000.0
+    voxel_vol_ml = voxel_volume_ml(spacing)
     shape = ct_array.shape
 
     # ---- Step 1: Validate and filter anchors -------------------------------
@@ -136,7 +126,7 @@ def partition_fat(
     exclusion_reasons: dict[str, str] = {}
     anchor_label: dict[str, int] = {}
 
-    for anchor_name in _CANONICAL_ANCHORS:
+    for anchor_name in CANONICAL_ANCHORS:
         if anchor_name not in anchor_masks:
             excluded_anchors.append(anchor_name)
             exclusion_reasons[anchor_name] = "mask not provided"
@@ -148,7 +138,7 @@ def partition_fat(
             exclusion_reasons[anchor_name] = "mask is empty"
             continue
 
-        volume_ml = np.count_nonzero(mask) * voxel_volume_ml
+        volume_ml = np.count_nonzero(mask) * voxel_vol_ml
         if volume_ml < config.min_anchor_volume_ml:
             excluded_anchors.append(anchor_name)
             exclusion_reasons[anchor_name] = (
@@ -159,7 +149,7 @@ def partition_fat(
 
         valid_anchors.append(anchor_name)
         # Labels are 1-indexed based on position in the canonical list.
-        anchor_label[anchor_name] = _CANONICAL_ANCHORS.index(anchor_name) + 1
+        anchor_label[anchor_name] = CANONICAL_ANCHORS.index(anchor_name) + 1
 
     if len(valid_anchors) < 2:
         raise ValueError(
@@ -210,10 +200,10 @@ def partition_fat(
     la_fat_mask = anchor_assignments == 1
 
     total_fat_voxels = np.count_nonzero(fat_mask)
-    total_fat_volume = total_fat_voxels * voxel_volume_ml
+    total_fat_volume = total_fat_voxels * voxel_vol_ml
 
     unassigned_voxels = np.count_nonzero(fat_mask & (anchor_assignments == 0))
-    unassigned_volume = unassigned_voxels * voxel_volume_ml
+    unassigned_volume = unassigned_voxels * voxel_vol_ml
 
     anchor_volumes_ml: dict[str, float] = {}
     anchor_shares: dict[str, float] = {}
@@ -221,7 +211,7 @@ def partition_fat(
     for anchor_name in valid_anchors:
         lbl = anchor_label[anchor_name]
         n_voxels = np.count_nonzero(anchor_assignments == lbl)
-        vol = n_voxels * voxel_volume_ml
+        vol = n_voxels * voxel_vol_ml
         anchor_volumes_ml[anchor_name] = vol
         share = (n_voxels / total_fat_voxels * 100.0) if total_fat_voxels > 0 else 0.0
         anchor_shares[anchor_name] = share

@@ -30,6 +30,7 @@ import time
 import numpy as np
 import SimpleITK as sitk
 
+from la_fat.anatomy import CANONICAL_ANCHORS, TS_NATIVE_FILENAMES as _ANATOMY_TS_NATIVE
 from la_fat.config import PipelineConfig
 
 logger = logging.getLogger(__name__)
@@ -40,15 +41,11 @@ logger = logging.getLogger(__name__)
 #: The keys are the short names used throughout the pipeline; the values are
 #: the stem (without ``.nii.gz``) that TS writes to its output directory.
 TS_STRUCTURE_NAMES: dict[str, str] = {
-    "LA": "heart_atrium_left",
-    "LV": "heart_ventricle_left",
-    "RA": "heart_atrium_right",
-    "RV": "heart_ventricle_right",
-    "Aorta": "aorta",
-    "Pulmonary Artery": "pulmonary_artery",
-    "Pericardium": "pericardium",
-    "Pulmonary Veins": "pulmonary_vein",
+    anchor.replace("_", " ") if "_" in anchor else anchor: _ANATOMY_TS_NATIVE[anchor]
+    for anchor in CANONICAL_ANCHORS
 }
+TS_STRUCTURE_NAMES["Pericardium"] = "pericardium"
+TS_STRUCTURE_NAMES["Pulmonary Veins"] = "pulmonary_vein"
 
 #: Each TS run needed to collect all 8 structures.  Structures are spread
 #: across different TotalSegmentator models so we must run several tasks.
