@@ -879,7 +879,7 @@ def create_dashboard(output_dir: str) -> pn.Column:  # type: ignore[return-value
     if pn is None:
         raise ImportError("Panel is required. Install with: pip install panel")
 
-    pn.extension(sizing_mode="stretch_width")
+    pn.extension("vtk", sizing_mode="stretch_width")
 
     patients = discover_patients(output_dir)
 

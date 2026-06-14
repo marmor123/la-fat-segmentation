@@ -50,8 +50,17 @@ TS_STRUCTURE_NAMES: dict[str, str] = {
     "Pulmonary Veins": "pulmonary_vein",
 }
 
-#: roi_subset values passed to TotalSegmentator.
-TS_ROI_SUBSET: list[str] = ["heart", "pericardium"]
+#: Each TS run needed to collect all 8 structures.  Structures are spread
+#: across different TotalSegmentator models so we must run several tasks.
+#: Each entry is a dict of keyword arguments passed to the TS Python API.
+_TS_RUNS: list[dict[str, object]] = [
+    # Run 1: heartchambers_highres → LA, LV, RA, RV, Aorta, Pulmonary Artery
+    {"task": "heartchambers_highres"},
+    # Run 2: total model cropped to heart + pulmonary_vein → Pulmonary Vein
+    {"roi_subset": ["heart", "pulmonary_vein"]},
+    # Run 3: trunk_cavities → Pericardium (--fast not supported here)
+    {"task": "trunk_cavities"},
+]
 
 
 # ── Public result type ──────────────────────────────────────────────────────
@@ -136,8 +145,12 @@ def is_ts_available() -> bool:
 # ── Internal helpers ────────────────────────────────────────────────────────
 
 
-def _run_totalsegmentator(ct_path: str, output_dir: str) -> None:
-    """Execute TotalSegmentator via its Python API or, as fallback, CLI.
+def _run_ts_api(
+    ct_path: str,
+    output_dir: str,
+    **kwargs: object,
+) -> None:
+    """Run a single TotalSegmentator invocation via the Python API.
 
     Parameters
     ----------
@@ -145,55 +158,70 @@ def _run_totalsegmentator(ct_path: str, output_dir: str) -> None:
         Path to the input CT NIfTI file.
     output_dir:
         Directory where TS will write its output masks.
+    **kwargs:
+        Additional keyword arguments forwarded to ``totalsegmentator()``
+        (e.g. ``task``, ``roi_subset``, ``fast``).
 
     Raises
     ------
     RuntimeError
-        If TotalSegmentator cannot run or fails.
+        If the API call fails.
     """
-    # Try the Python API first (preferred)
-    _ts_func = None
-    try:
-        from totalsegmentator.python_api import (  # type: ignore[import-untyped]
-            totalsegmentator as _ts_func,
-        )
-    except ImportError:
-        pass
+    from totalsegmentator.python_api import (  # type: ignore[import-untyped]
+        totalsegmentator as _ts_func,
+    )
 
-    if _ts_func is not None:
-        logger.info("Running TotalSegmentator (Python API) on %s", ct_path)
-        kwargs: dict[str, object] = {
-            "input": ct_path,
-            "output": output_dir,
-            "roi_subset": TS_ROI_SUBSET,  # TS expects a list of strings
-        }
-        # Some TS versions support fast / crop for scout-phase optimisation.
-        # Both are optional — if the parameter is unknown (TypeError) or
-        # the selected task doesn't support it (ValueError), we fall through.
-        for extra in ("fast", "crop"):
-            try:
-                _ts_func(**kwargs, **{extra: True})  # type: ignore[arg-type]
-                return
-            except (TypeError, ValueError):
-                continue  # parameter not supported or incompatible with task
-            except Exception as exc:
-                raise RuntimeError(
-                    f"TotalSegmentator Python API failed: {exc}"
-                ) from exc
-        # No extra kwarg worked — call without it.
-        _ts_func(**kwargs)  # type: ignore[arg-type]
-        return
+    merged: dict[str, object] = {
+        "input": ct_path,
+        "output": output_dir,
+        **kwargs,
+    }
+    logger.info(
+        "Running TS (task=%s, roi_subset=%s, fast=%s)",
+        merged.get("task", "total"),
+        merged.get("roi_subset", None),
+        merged.get("fast", False),
+    )
+    _ts_func(**merged)  # type: ignore[arg-type]
 
-    # Fallback: CLI
-    logger.info("Running TotalSegmentator (CLI) on %s", ct_path)
+
+def _run_ts_cli(
+    ct_path: str,
+    output_dir: str,
+    task: str = "total",
+    roi_subset: list[str] | None = None,
+) -> None:
+    """Run a single TotalSegmentator invocation via the CLI (fallback).
+
+    Parameters
+    ----------
+    ct_path:
+        Path to the input CT NIfTI file.
+    output_dir:
+        Directory where TS will write its output masks.
+    task:
+        TS task name (default ``"total"``).
+    roi_subset:
+        Optional list of ROI names for region-restricted inference.
+
+    Raises
+    ------
+    RuntimeError
+        If the CLI is not available or fails.
+    """
+    cmd: list[str] = [
+        "TotalSegmentator",
+        "-i", ct_path,
+        "-o", output_dir,
+        "-t", task,
+    ]
+    if roi_subset:
+        cmd.extend(["--roi_subset", ",".join(roi_subset)])
+
+    logger.info("Running TotalSegmentator (CLI): %s", " ".join(cmd))
     try:
         subprocess.run(
-            [
-                "TotalSegmentator",
-                "-i", ct_path,
-                "-o", output_dir,
-                "--roi_subset", ",".join(TS_ROI_SUBSET),
-            ],
+            cmd,
             check=True,
             capture_output=True,
             text=True,
@@ -280,10 +308,11 @@ def run_ts_precompute(
     -----
     1. Derive a patient ID from the CT filename.
     2. Create the output directory ``{output_dir}/{patient_id}/``.
-    3. Run TotalSegmentator on the CT (heart + pericardium
-       ``roi_subset``), saving raw masks to ``_ts_raw/``.
+    3. Run several TotalSegmentator models (total with heart roi_subset,
+       heartchambers_highres, trunk_cavities), saving raw masks to
+       per-run temp dirs under ``_ts_raw/``.
     4. For each of the 8 structures:
-       a. Locate the TS output mask.
+       a. Locate the TS output mask across all run directories.
        b. Resample to isotropic spacing with nearest-neighbour
           interpolation.
        c. Save as ``{patient_id}_{structure}.nii.gz``.
@@ -316,11 +345,53 @@ def run_ts_precompute(
     ts_raw_dir = os.path.join(patient_out_dir, "_ts_raw")
     os.makedirs(ts_raw_dir, exist_ok=True)
 
-    # ---- Step 3: run TS --------------------------------------------------
+    # ---- Step 3: run TS (possibly multiple models) ------------------------
     logger.info(
         "TS pre-compute for %s (output: %s)", patient_id, patient_out_dir
     )
-    _run_totalsegmentator(ct_path, ts_raw_dir)
+
+    # Check whether the Python API is available.
+    _use_api = True
+    try:
+        from totalsegmentator.python_api import totalsegmentator  # noqa: F401
+    except ImportError:
+        _use_api = False
+
+    for idx, run_kwargs in enumerate(_TS_RUNS):
+        run_label = run_kwargs.get("task", "total")
+        run_raw_dir = os.path.join(ts_raw_dir, f"_run{idx:02d}")
+        os.makedirs(run_raw_dir, exist_ok=True)
+
+        logger.info(
+            "TS run %d/%d (task=%s)", idx + 1, len(_TS_RUNS), run_label
+        )
+        try:
+            if _use_api:
+                _run_ts_api(ct_path, run_raw_dir, **run_kwargs)
+            else:
+                _run_ts_cli(
+                    ct_path,
+                    run_raw_dir,
+                    task=str(run_kwargs.get("task", "total")),
+                    roi_subset=run_kwargs.get("roi_subset", None),  # type: ignore[arg-type]
+                )
+        except Exception as exc:
+            logger.error(
+                "TS run %d/%d (task=%s) failed: %s",
+                idx + 1, len(_TS_RUNS), run_label, exc,
+            )
+            _cleanup_dir(run_raw_dir)
+            continue
+
+        # Move all .nii.gz files from run dir up to ts_raw_dir so the
+        # structure-discovery loop below can find them in one place.
+        for fname in os.listdir(run_raw_dir):
+            if fname.endswith(".nii.gz"):
+                src = os.path.join(run_raw_dir, fname)
+                dst = os.path.join(ts_raw_dir, fname)
+                if not os.path.exists(dst):
+                    os.rename(src, dst)
+        _cleanup_dir(run_raw_dir)
 
     # ---- Step 4: extract & resample each structure -----------------------
     masks_saved: dict[str, str] = {}
