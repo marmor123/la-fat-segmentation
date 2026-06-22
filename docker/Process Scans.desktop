@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Process Scans
+Comment=Process all CT scans through the LA Fat Segmentation pipeline
+Exec=bash -c 'DATA_DIR="${HOME}/Desktop/la-fat-data"; docker run --rm -v "${DATA_DIR}:/workspace" la-fat pipeline; echo ""; echo "Processing complete. Press Enter to close."; read'
+Terminal=true
+Type=Application
+Categories=Science;MedicalSoftware;
+Icon=utilities-terminal

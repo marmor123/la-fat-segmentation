@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=View Results
+Comment=Launch the LA Fat Segmentation interactive QA dashboard
+Exec=bash -c 'DATA_DIR="${HOME}/Desktop/la-fat-data"; docker run --rm -v "${DATA_DIR}:/workspace" -p 5006:5006 la-fat dashboard & sleep 3; xdg-open http://localhost:5006; echo ""; echo "Dashboard is running at http://localhost:5006"; echo "Press Enter to stop the server."; read; docker stop $(docker ps -q --filter ancestor=la-fat) 2>/dev/null'
+Terminal=true
+Type=Application
+Categories=Science;MedicalSoftware;
+Icon=utilities-terminal

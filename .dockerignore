@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+dist
+build
+*.egg
+
+# Virtual environments
+venv
+.venv
+env
+.env
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Project-specific
+outputs
+data
+*.tar
+*.zip
+
+# Documentation (not needed in image)
+docs
+*.md
+!CONTEXT.md
+
+# Docker — keep entrypoint.sh available for COPY
+.dockerignore
+docker/Install.bat
+docker/install.sh
+docker/Process Scans.bat
+docker/View Results.bat
+docker/rebuild.sh
+
+# Node/Panel cache
+node_modules

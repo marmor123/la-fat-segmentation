@@ -1318,3 +1318,54 @@ def _build_card(  # type: ignore[no-untyped-def]
             "border": "1px solid #3a3a55",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point (python -m la_fat.interactive_dashboard)
+# ---------------------------------------------------------------------------
+
+
+def _main_cli() -> None:
+    """Parse CLI arguments and start the dashboard server."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="LA Fat Segmentation — Interactive Dashboard",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="outputs",
+        help="Path to the pipeline output directory (default: outputs)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5006,
+        help="Port to serve the dashboard on (default: 5006)",
+    )
+    parser.add_argument(
+        "--address",
+        default="0.0.0.0",
+        help="Bind address (default: 0.0.0.0)",
+    )
+    args = parser.parse_args()
+
+    output_dir = os.path.abspath(args.output_dir)
+
+    dashboard = create_dashboard(output_dir)
+    url = f"http://localhost:{args.port}"
+    print(f"LA Fat Dashboard")
+    print(f"  Output directory: {output_dir}")
+    print(f"  URL: {url}")
+    print("  Press Ctrl+C to stop.")
+
+    pn.serve(
+        dashboard,
+        address=args.address,
+        port=args.port,
+        show=False,
+    )
+
+
+if __name__ == "__main__":
+    _main_cli()
