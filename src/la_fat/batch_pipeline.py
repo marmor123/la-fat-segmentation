@@ -10,6 +10,7 @@ no pipeline internals are modified.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import sys
@@ -70,6 +71,13 @@ def run_batch_pipeline(
 
     resolved_data_dir = data_dir or cfg.data_dir
     resolved_output_dir = output_dir or cfg.output_dir
+
+    # Override config paths so the pipeline uses the resolved directories
+    cfg = dataclasses.replace(
+        cfg,
+        data_dir=resolved_data_dir,
+        output_dir=resolved_output_dir,
+    )
 
     # Discover CT files
     ct_files = _discover_ct_files(resolved_data_dir)
