@@ -41,21 +41,27 @@ RUN mkdir -p /workspace/data/raw /workspace/data/intermediate /workspace/outputs
 # tasks used by the pipeline.  Models land in $TOTALSEG_HOME_DIR/nnunet/.
 # This bakes ~2-3 GB of pretrained weights into the image.
 RUN mkdir -p /totalsegmentator && \
-    echo "{\"totalseg_id\":\"${TOTALSEG_LICENSE}\",\"license_number\":\"${TOTALSEG_LICENSE}\",\"send_usage_stats\":false,\"statistics_disclaimer_shown\":true}" > /totalsegmentator/config.json && \
-    python -c "\
-import os; \
-os.environ['TOTALSEG_HOME_DIR'] = '/totalsegmentator'; \
-from totalsegmentator.libs import download_pretrained_weights; \
-from totalsegmentator.config import setup_totalseg, set_config_key; \
-setup_totalseg(); \
-set_config_key('statistics_disclaimer_shown', True); \
-tasks = {'heartchambers_highres': [301], 'total': [291,292,293,294,295,298], 'trunk_cavities': [343]}; \
-for name, ids in tasks.items(): \
-    for tid in ids: \
-        print(f'[build] Downloading {name} (task {tid})...'); \
-        download_pretrained_weights(tid); \
-print('[build] All model weights downloaded.'); \
-"
+    printf '{"totalseg_id":"%s","license_number":"%s","send_usage_stats":false,"statistics_disclaimer_shown":true}' \
+        "${TOTALSEG_LICENSE}" "${TOTALSEG_LICENSE}" > /totalsegmentator/config.json && \
+    printf 'import os
+os.environ["TOTALSEG_HOME_DIR"] = "/totalsegmentator"
+from totalsegmentator.libs import download_pretrained_weights
+from totalsegmentator.config import setup_totalseg, set_config_key
+setup_totalseg()
+set_config_key("statistics_disclaimer_shown", True)
+tasks = {
+    "heartchambers_highres": [301],
+    "total": [291, 292, 293, 294, 295, 298],
+    "trunk_cavities": [343],
+}
+for name, ids in tasks.items():
+    for tid in ids:
+        print(f"[build] Downloading {name} (task {tid})...")
+        download_pretrained_weights(tid)
+print("[build] All model weights downloaded.")
+' > /tmp/download_weights.py && \
+    python /tmp/download_weights.py && \
+    rm /tmp/download_weights.py
 
 # ── Entrypoint ──────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /entrypoint.sh
