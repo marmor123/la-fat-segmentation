@@ -28,8 +28,10 @@ RUN apt-get update && \
         && rm -rf /var/lib/apt/lists/*
 
 # ── Clone & install pipeline ────────────────────────────────────────────────
+ARG CACHEBUST=1
 WORKDIR /app
-RUN git clone https://github.com/marmor123/la-fat-segmentation.git . && \
+RUN echo "Cache bust: ${CACHEBUST}" && \
+    git clone https://github.com/marmor123/la-fat-segmentation.git . && \
     pip install --no-cache-dir .
 
 # ── Workspace directories ───────────────────────────────────────────────────
