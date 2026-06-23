@@ -30,27 +30,32 @@ RUN apt-get update && \
 # ── Clone & install pipeline ────────────────────────────────────────────────
 WORKDIR /app
 RUN git clone https://github.com/marmor123/la-fat-segmentation.git . && \
-    pip install --no-cache-dir -e .
+    pip install --no-cache-dir .
 
 # ── Workspace directories ───────────────────────────────────────────────────
 RUN mkdir -p /workspace/data/raw /workspace/data/intermediate /workspace/outputs
 
 # ── Pre-download TotalSegmentator model weights ─────────────────────────────
-# Run a minimal TS invocation to trigger model weight download into
-# $TOTALSEG_HOME_DIR/nnunet/.  This bakes ~2-3 GB of pretrained weights
-# into the image so users never wait for first-run downloads.
+# Write a temporary license config so gated tasks (heartchambers_highres,
+# trunk_cavities) can download.  Then download weights for all three TS
+# tasks used by the pipeline.  Models land in $TOTALSEG_HOME_DIR/nnunet/.
+# This bakes ~2-3 GB of pretrained weights into the image.
 RUN mkdir -p /totalsegmentator && \
+    echo "{\"totalseg_id\":\"${TOTALSEG_LICENSE}\",\"license_number\":\"${TOTALSEG_LICENSE}\",\"send_usage_stats\":false,\"statistics_disclaimer_shown\":true}" > /totalsegmentator/config.json && \
     python -c "\
-import os, sys; \
+import os; \
 os.environ['TOTALSEG_HOME_DIR'] = '/totalsegmentator'; \
-print('[build] Downloading TotalSegmentator model weights...'); \
-try: \
-    from totalsegmentator.lib.download import download_pretrained_weights; \
-    download_pretrained_weights(); \
-    print('[build] Model weights downloaded successfully.'); \
-except Exception as e: \
-    print(f'[build] Note: Model download not completed ({e}) — will download on first run.'); \
-" 2>&1
+from totalsegmentator.libs import download_pretrained_weights; \
+from totalsegmentator.config import setup_totalseg, set_config_key; \
+setup_totalseg(); \
+set_config_key('statistics_disclaimer_shown', True); \
+tasks = {'heartchambers_highres': [301], 'total': [291,292,293,294,295,298], 'trunk_cavities': [343]}; \
+for name, ids in tasks.items(): \
+    for tid in ids: \
+        print(f'[build] Downloading {name} (task {tid})...'); \
+        download_pretrained_weights(tid); \
+print('[build] All model weights downloaded.'); \
+"
 
 # ── Entrypoint ──────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /entrypoint.sh
