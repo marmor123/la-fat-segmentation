@@ -1,11 +1,13 @@
 """Batch pipeline wrapper for LA Fat Segmentation.
 
-Discovers all CT scans in ``data/raw/``, derives patient IDs, skips
+Discovers all CT scans in ``data/raw/``, derives patient IDs, runs
+TotalSegmentator pre-compute when masks are missing, skips
 already-processed patients, and runs the pipeline sequentially for
 each new patient.
 
-This sits above :func:`la_fat.pipeline.run_fat_extraction_pipeline` —
-no pipeline internals are modified.
+This sits above :func:`la_fat.pipeline.run_fat_extraction_pipeline` and
+:func:`la_fat.ts_runner.run_ts_precompute` — no pipeline internals are
+modified.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import time
 
 from la_fat.config import PipelineConfig
 from la_fat.pipeline import run_fat_extraction_pipeline
-from la_fat.ts_runner import extract_patient_id
+from la_fat.ts_runner import extract_patient_id, run_ts_precompute
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,9 @@ def run_batch_pipeline(
             "failed_ids": [],
         }
 
+    # Resolve intermediate directory (where TS masks live)
+    intermediate_dir = os.path.join(resolved_data_dir, cfg.intermediate_subdir)
+
     # Process new patients
     succeeded_count = 0
     failed_count = 0
@@ -133,7 +138,32 @@ def run_batch_pipeline(
         _print_skipped(pid)
 
     for idx, pid in enumerate(new_patients, start=1):
-        _print_progress(idx, to_process, pid)
+        ct_file = ct_files[patient_ids.index(pid)]
+
+        # ── Step A: TS pre-compute (if masks missing) ─────────────────────
+        if not _masks_exist(intermediate_dir, pid):
+            _print_ts_start(idx, to_process, pid)
+            try:
+                ts_result = run_ts_precompute(
+                    ct_file, intermediate_dir, cfg,
+                )
+                mask_count = len(ts_result.masks_saved)
+                ts_time = ts_result.total_runtime_seconds
+                if ts_result.errors:
+                    _print_ts_failed(ts_result.errors)
+                    failed_count += 1
+                    failed_ids.append(pid)
+                    continue
+                _print_ts_done(mask_count, ts_time)
+            except Exception as exc:
+                _print_ts_failed([str(exc)])
+                failed_count += 1
+                failed_ids.append(pid)
+                continue
+        else:
+            _print_progress(idx, to_process, pid)
+
+        # ── Step B: Fat extraction pipeline ───────────────────────────────
         try:
             result = run_fat_extraction_pipeline(
                 patient_id=pid,
@@ -197,6 +227,21 @@ def _is_completed(output_dir: str, patient_id: str) -> bool:
     return os.path.isfile(result_path)
 
 
+def _masks_exist(intermediate_dir: str, patient_id: str) -> bool:
+    """Return ``True`` if TS masks exist for *patient_id*.
+
+    Checks for any ``.nii.gz`` file inside the patient's intermediate
+    directory (e.g. ``intermediate/<patient_id>/``).
+    """
+    patient_dir = os.path.join(intermediate_dir, patient_id)
+    if not os.path.isdir(patient_dir):
+        return False
+    return any(
+        fname.endswith(".nii.gz")
+        for fname in os.listdir(patient_dir)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
@@ -232,6 +277,28 @@ def _print_failed(errors: list[str]) -> None:
     """Print failure with the first error message."""
     first_error = errors[0] if errors else "unknown error"
     print(f"\r  FAILED — {first_error}" + " " * 20)
+
+
+def _print_ts_start(idx: int, total: int, patient_id: str) -> None:
+    """Print that TotalSegmentator is starting for a patient."""
+    print(
+        f"  [{idx}/{total}] {patient_id:<20}  TotalSegmentator (generating masks)...",
+        end="",
+    )
+    sys.stdout.flush()
+
+
+def _print_ts_done(mask_count: int, seconds: float) -> None:
+    """Print TS completion with mask count and runtime."""
+    print(
+        f"\r  DONE ({mask_count} masks, {seconds:.0f}s)" + " " * 30
+    )
+
+
+def _print_ts_failed(errors: list[str]) -> None:
+    """Print TS failure."""
+    first_error = errors[0] if errors else "unknown error"
+    print(f"\r  FAILED (TS) — {first_error}" + " " * 20)
 
 
 def _print_summary(

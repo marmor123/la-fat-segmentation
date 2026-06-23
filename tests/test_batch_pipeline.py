@@ -175,6 +175,12 @@ class TestSkipLogic:
 class TestBatchPipelineInvocation:
     """The batch wrapper calls run_fat_extraction_pipeline for new patients."""
 
+    def _create_masks(self, data_dir: str, patient_id: str) -> None:
+        """Create minimal TS mask files so TS pre-compute is skipped."""
+        mask_dir = os.path.join(data_dir, "intermediate", patient_id)
+        os.makedirs(mask_dir, exist_ok=True)
+        _touch(os.path.join(mask_dir, f"{patient_id}_LA.nii.gz"))
+
     def test_calls_pipeline_for_each_new_patient(self, tmp_path, monkeypatch):
         """Each discovered patient without existing results triggers a
         pipeline call."""
@@ -186,6 +192,9 @@ class TestBatchPipelineInvocation:
         os.makedirs(raw_dir)
         _touch(os.path.join(raw_dir, "PAT1.nii.gz"))
         _touch(os.path.join(raw_dir, "PAT2.nii.gz"))
+        # Pre-create masks so TS pre-compute is skipped
+        self._create_masks(data_dir, "PAT1")
+        self._create_masks(data_dir, "PAT2")
 
         config = PipelineConfig(data_dir=data_dir, output_dir=output_dir)
 
@@ -230,6 +239,7 @@ class TestBatchPipelineInvocation:
         os.makedirs(raw_dir)
         _touch(os.path.join(raw_dir, "OLD.nii.gz"))
         _touch(os.path.join(raw_dir, "NEW.nii.gz"))
+        self._create_masks(data_dir, "NEW")
 
         # Pre-mark OLD as completed
         _write_result_json(output_dir, "OLD")
@@ -314,6 +324,12 @@ class TestBatchPipelineInvocation:
 class TestBatchErrorResilience:
     """Individual patient failures do not halt batch processing."""
 
+    def _create_masks(self, data_dir: str, patient_id: str) -> None:
+        """Create minimal TS mask files so TS pre-compute is skipped."""
+        mask_dir = os.path.join(data_dir, "intermediate", patient_id)
+        os.makedirs(mask_dir, exist_ok=True)
+        _touch(os.path.join(mask_dir, f"{patient_id}_LA.nii.gz"))
+
     def test_continues_after_patient_failure(self, tmp_path, monkeypatch):
         """When one patient fails, remaining patients are still processed."""
         from la_fat.batch_pipeline import run_batch_pipeline
@@ -325,6 +341,9 @@ class TestBatchErrorResilience:
         _touch(os.path.join(raw_dir, "GOOD1.nii.gz"))
         _touch(os.path.join(raw_dir, "BAD.nii.gz"))
         _touch(os.path.join(raw_dir, "GOOD2.nii.gz"))
+        self._create_masks(data_dir, "GOOD1")
+        self._create_masks(data_dir, "BAD")
+        self._create_masks(data_dir, "GOOD2")
 
         called_ids: list[str] = []
 
@@ -380,6 +399,8 @@ class TestBatchErrorResilience:
         os.makedirs(raw_dir)
         _touch(os.path.join(raw_dir, "CRASH.nii.gz"))
         _touch(os.path.join(raw_dir, "SURVIVOR.nii.gz"))
+        self._create_masks(data_dir, "CRASH")
+        self._create_masks(data_dir, "SURVIVOR")
 
         called_ids: list[str] = []
 
@@ -421,6 +442,7 @@ class TestBatchErrorResilience:
         raw_dir = os.path.join(data_dir, "raw")
         os.makedirs(raw_dir)
         _touch(os.path.join(raw_dir, "FAIL1.nii.gz"))
+        self._create_masks(data_dir, "FAIL1")
 
         def _fake_pipeline(patient_id, config=None, config_path=None):
             return PipelineResult(
@@ -464,6 +486,10 @@ class TestConfigPropagation:
         raw_dir = os.path.join(data_dir, "raw")
         os.makedirs(raw_dir)
         _touch(os.path.join(raw_dir, "PATIENT.nii.gz"))
+        # Pre-create masks so TS pre-compute is skipped
+        mask_dir = os.path.join(data_dir, "intermediate", "PATIENT")
+        os.makedirs(mask_dir, exist_ok=True)
+        _touch(os.path.join(mask_dir, "PATIENT_LA.nii.gz"))
 
         config = PipelineConfig(
             data_dir=data_dir,
@@ -503,6 +529,259 @@ class TestConfigPropagation:
 # ---------------------------------------------------------------------------
 # Tests: No scans case
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Tests: TS pre-compute integration
+# ---------------------------------------------------------------------------
+
+
+class TestTsPrecomputeIntegration:
+    """TS pre-compute runs automatically when masks don't exist."""
+
+    def test_masks_exist_returns_true_when_masks_present(self, tmp_path):
+        """_masks_exist returns True when mask files exist."""
+        from la_fat.batch_pipeline import _masks_exist
+
+        intermediate_dir = str(tmp_path / "intermediate")
+        patient_dir = os.path.join(intermediate_dir, "PAT1")
+        os.makedirs(patient_dir)
+        _touch(os.path.join(patient_dir, "PAT1_LA.nii.gz"))
+        _touch(os.path.join(patient_dir, "PAT1_Pericardium.nii.gz"))
+
+        assert _masks_exist(intermediate_dir, "PAT1") is True
+
+    def test_masks_exist_returns_false_when_no_masks(self, tmp_path):
+        """_masks_exist returns False when no .nii.gz files exist."""
+        from la_fat.batch_pipeline import _masks_exist
+
+        intermediate_dir = str(tmp_path / "intermediate")
+        patient_dir = os.path.join(intermediate_dir, "PAT2")
+        os.makedirs(patient_dir)
+
+        assert _masks_exist(intermediate_dir, "PAT2") is False
+
+    def test_masks_exist_returns_false_when_dir_missing(self, tmp_path):
+        """_masks_exist returns False when patient dir doesn't exist."""
+        from la_fat.batch_pipeline import _masks_exist
+
+        intermediate_dir = str(tmp_path / "intermediate")
+        os.makedirs(intermediate_dir, exist_ok=True)
+
+        assert _masks_exist(intermediate_dir, "NOPAT") is False
+
+    def test_ts_called_when_masks_missing(self, tmp_path, monkeypatch):
+        """TS pre-compute is called when no masks exist for a patient."""
+        from la_fat.batch_pipeline import run_batch_pipeline
+        from la_fat.ts_runner import TsPrecomputeResult
+
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        raw_dir = os.path.join(data_dir, "raw")
+        os.makedirs(raw_dir)
+        _touch(os.path.join(raw_dir, "NEWPT.nii.gz"))
+
+        ts_calls: list[str] = []
+
+        def _fake_ts(ct_path, output_dir, config):
+            ts_calls.append(ct_path)
+            return TsPrecomputeResult(
+                patient_id="NEWPT",
+                output_dir="",
+                masks_saved={"LA": "/fake/LA.nii.gz"},
+                mask_volumes_ml={"LA": 10.0},
+                errors=[],
+                total_runtime_seconds=5.0,
+            )
+
+        pipeline_calls: list[str] = []
+
+        def _fake_pipeline(patient_id, config=None, config_path=None):
+            pipeline_calls.append(patient_id)
+            return PipelineResult(
+                patient_id=patient_id,
+                success=True,
+                partition_result=None,
+                fat_threshold_result=None,
+                pericardium_result=None,
+                cleanup_result=None,
+                quality_flags=[],
+                dashboard_output=None,
+                errors=[],
+                warnings=[],
+                total_runtime_seconds=1.0,
+            )
+
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_ts_precompute",
+            _fake_ts,
+        )
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_fat_extraction_pipeline",
+            _fake_pipeline,
+        )
+
+        summary = run_batch_pipeline(data_dir=data_dir, output_dir=output_dir)
+
+        assert len(ts_calls) == 1, f"TS should be called once, got {len(ts_calls)}"
+        assert len(pipeline_calls) == 1
+        assert summary["succeeded"] == 1
+
+    def test_ts_skipped_when_masks_exist(self, tmp_path, monkeypatch):
+        """TS pre-compute is skipped when masks already exist."""
+        from la_fat.batch_pipeline import run_batch_pipeline
+
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        raw_dir = os.path.join(data_dir, "raw")
+        os.makedirs(raw_dir)
+        _touch(os.path.join(raw_dir, "HASMASK.nii.gz"))
+
+        # Pre-create mask files
+        intermediate_dir = os.path.join(data_dir, "intermediate", "HASMASK")
+        os.makedirs(intermediate_dir)
+        _touch(os.path.join(intermediate_dir, "HASMASK_LA.nii.gz"))
+
+        ts_calls: list[str] = []
+
+        def _fake_ts(ct_path, output_dir, config):
+            ts_calls.append(ct_path)
+            from la_fat.ts_runner import TsPrecomputeResult
+            return TsPrecomputeResult(
+                patient_id="HASMASK", output_dir="",
+                masks_saved={"LA": "/fake/LA.nii.gz"},
+                mask_volumes_ml={"LA": 10.0},
+                errors=[], total_runtime_seconds=1.0,
+            )
+
+        pipeline_calls: list[str] = []
+
+        def _fake_pipeline(patient_id, config=None, config_path=None):
+            pipeline_calls.append(patient_id)
+            return PipelineResult(
+                patient_id=patient_id,
+                success=True,
+                partition_result=None,
+                fat_threshold_result=None,
+                pericardium_result=None,
+                cleanup_result=None,
+                quality_flags=[],
+                dashboard_output=None,
+                errors=[],
+                warnings=[],
+                total_runtime_seconds=1.0,
+            )
+
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_ts_precompute",
+            _fake_ts,
+        )
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_fat_extraction_pipeline",
+            _fake_pipeline,
+        )
+
+        summary = run_batch_pipeline(data_dir=data_dir, output_dir=output_dir)
+
+        assert len(ts_calls) == 0, f"TS should be skipped, got {len(ts_calls)} calls"
+        assert len(pipeline_calls) == 1
+
+    def test_ts_failure_skips_pipeline(self, tmp_path, monkeypatch):
+        """When TS pre-compute fails, the pipeline is not called for that patient."""
+        from la_fat.batch_pipeline import run_batch_pipeline
+
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        raw_dir = os.path.join(data_dir, "raw")
+        os.makedirs(raw_dir)
+        _touch(os.path.join(raw_dir, "TSFAIL.nii.gz"))
+
+        def _fake_ts(ct_path, output_dir, config):
+            raise RuntimeError("TS crashed!")
+
+        pipeline_calls: list[str] = []
+
+        def _fake_pipeline(patient_id, config=None, config_path=None):
+            pipeline_calls.append(patient_id)
+            return PipelineResult(
+                patient_id=patient_id, success=True,
+                partition_result=None, fat_threshold_result=None,
+                pericardium_result=None, cleanup_result=None,
+                quality_flags=[], dashboard_output=None,
+                errors=[], warnings=[], total_runtime_seconds=1.0,
+            )
+
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_ts_precompute",
+            _fake_ts,
+        )
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_fat_extraction_pipeline",
+            _fake_pipeline,
+        )
+
+        summary = run_batch_pipeline(data_dir=data_dir, output_dir=output_dir)
+
+        assert len(pipeline_calls) == 0, "Pipeline should not be called after TS failure"
+        assert summary["failed"] == 1
+        assert "TSFAIL" in summary["failed_ids"]
+
+    def test_mixed_masks_some_have_some_dont(self, tmp_path, monkeypatch):
+        """Patients with masks skip TS; those without get TS first."""
+        from la_fat.batch_pipeline import run_batch_pipeline
+        from la_fat.ts_runner import TsPrecomputeResult
+
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        raw_dir = os.path.join(data_dir, "raw")
+        os.makedirs(raw_dir)
+        _touch(os.path.join(raw_dir, "HAS.nii.gz"))
+        _touch(os.path.join(raw_dir, "NEEDS.nii.gz"))
+
+        # HAS already has masks
+        intermediate_dir = os.path.join(data_dir, "intermediate")
+        os.makedirs(os.path.join(intermediate_dir, "HAS"))
+        _touch(os.path.join(intermediate_dir, "HAS", "HAS_LA.nii.gz"))
+
+        # NEEDS has no masks (dir doesn't exist)
+
+        ts_calls: list[str] = []
+
+        def _fake_ts(ct_path, output_dir, config):
+            ts_calls.append(ct_path)
+            return TsPrecomputeResult(
+                patient_id="NEEDS", output_dir="",
+                masks_saved={"LA": "/fake/LA.nii.gz"},
+                mask_volumes_ml={"LA": 10.0},
+                errors=[], total_runtime_seconds=1.0,
+            )
+
+        pipeline_calls: list[str] = []
+
+        def _fake_pipeline(patient_id, config=None, config_path=None):
+            pipeline_calls.append(patient_id)
+            return PipelineResult(
+                patient_id=patient_id, success=True,
+                partition_result=None, fat_threshold_result=None,
+                pericardium_result=None, cleanup_result=None,
+                quality_flags=[], dashboard_output=None,
+                errors=[], warnings=[], total_runtime_seconds=1.0,
+            )
+
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_ts_precompute",
+            _fake_ts,
+        )
+        monkeypatch.setattr(
+            "la_fat.batch_pipeline.run_fat_extraction_pipeline",
+            _fake_pipeline,
+        )
+
+        summary = run_batch_pipeline(data_dir=data_dir, output_dir=output_dir)
+
+        assert len(ts_calls) == 1, f"TS should be called once for NEEDS, got {len(ts_calls)}"
+        assert len(pipeline_calls) == 2, f"Pipeline should run for both, got {len(pipeline_calls)}"
+        assert summary["succeeded"] == 2
 
 
 class TestEmptyInput:

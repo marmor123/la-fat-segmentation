@@ -82,6 +82,15 @@ class TestBatchPipelineCLI:
             os.path.join(raw_dir, "TESTBATCH.nii.gz"),
         )
 
+        # Pre-create minimal masks so TS pre-compute is skipped
+        # (TS can't process an 8x8x8 dummy volume)
+        mask_dir = os.path.join(data_dir, "intermediate", "TESTBATCH")
+        os.makedirs(mask_dir, exist_ok=True)
+        nib.save(
+            nib.Nifti1Image(np.ones((8, 8, 8), dtype=np.uint8), np.eye(4)),
+            os.path.join(mask_dir, "TESTBATCH_LA.nii.gz"),
+        )
+
         result = subprocess.run(
             [
                 sys.executable, "-m", "la_fat.batch_pipeline",
@@ -92,7 +101,7 @@ class TestBatchPipelineCLI:
             text=True,
             timeout=60,
         )
-        # May fail because no TS masks, but should not throw unhandled errors
+        # May fail because masks are synthetic, but should not throw unhandled errors
         # The batch wrapper catches pipeline failures gracefully
         assert result.returncode in (0, 1)
 
