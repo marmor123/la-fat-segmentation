@@ -12,6 +12,7 @@ set_config_key("statistics_disclaimer_shown", True)
 tasks = {
     "heartchambers_highres": [301],
     "total": [291, 292, 293, 294, 295, 298],
+    "total_fast": [297],  # cropping model used internally by TS
     "trunk_cavities": [343],
 }
 
