@@ -27,7 +27,6 @@ from la_fat.anatomy import (
 )
 from la_fat.config import PipelineConfig
 from la_fat.cleanup import CleanupResult
-from la_fat.fat_thresholder import FatThresholdResult
 from la_fat.partition_engine import PartitionResult
 from la_fat.pericardium_resolver import PericardiumResult
 from la_fat.quality_flagger import QualityFlag
@@ -79,7 +78,6 @@ def generate_dashboard(
     anchor_masks: dict[str, np.ndarray],
     pericardium_result: PericardiumResult,
     partition_result: PartitionResult,
-    fat_threshold_result: FatThresholdResult,
     cleanup_result: CleanupResult,
     quality_flags: list[QualityFlag],
     config: PipelineConfig,
@@ -136,7 +134,6 @@ def generate_dashboard(
     csv_path = os.path.join(output_dir, "summary.csv")
     summary_text = _build_numeric_summary(
         patient_id=patient_id,
-        fat_threshold_result=fat_threshold_result,
         pericardium_result=pericardium_result,
         partition_result=partition_result,
         cleanup_result=cleanup_result,
@@ -357,7 +354,6 @@ def _build_fat_overlay(
 
 def _build_numeric_summary(
     patient_id: str,
-    fat_threshold_result: FatThresholdResult,
     pericardium_result: PericardiumResult,
     partition_result: PartitionResult,
     cleanup_result: CleanupResult,
@@ -394,18 +390,6 @@ def _build_numeric_summary(
     _add("QA DASHBOARD SUMMARY")
     _add(f"Patient: {patient_id}")
     _add("=" * 50)
-    _add("")
-
-    # Fat threshold
-    _add("--- Fat Threshold ---")
-    _add(f"  Method:              {fat_threshold_result.method}")
-    _add(f"  Mean HU:             {fat_threshold_result.mean_hu:.2f}")
-    _add(f"  Sigma HU:            {fat_threshold_result.sigma_hu:.2f}")
-    _add(f"  Range (low):         {fat_threshold_result.hu_low:.2f}")
-    _add(f"  Range (high):        {fat_threshold_result.hu_high:.2f}")
-    _add(f"  Fallback triggered:  {fat_threshold_result.fallback_triggered}")
-    if fat_threshold_result.fallback_reason:
-        _add(f"  Fallback reason:     {fat_threshold_result.fallback_reason}")
     _add("")
 
     # Pericardium
@@ -490,27 +474,6 @@ def _build_numeric_summary(
     _cr(["Category", "Key", "Value"])
 
     _cr(["Patient", "id", patient_id])
-    _cr(["Fat Threshold", "method", fat_threshold_result.method])
-    _cr(["Fat Threshold", "mean_hu", str(fat_threshold_result.mean_hu)])
-    _cr(["Fat Threshold", "sigma_hu", str(fat_threshold_result.sigma_hu)])
-    _cr(["Fat Threshold", "hu_low", str(fat_threshold_result.hu_low)])
-    _cr(["Fat Threshold", "hu_high", str(fat_threshold_result.hu_high)])
-    _cr(
-        [
-            "Fat Threshold",
-            "fallback_triggered",
-            str(fat_threshold_result.fallback_triggered),
-        ]
-    )
-    if fat_threshold_result.fallback_reason:
-        _cr(
-            [
-                "Fat Threshold",
-                "fallback_reason",
-                fat_threshold_result.fallback_reason,
-            ]
-        )
-
     _cr(["Pericardium", "method", pericardium_result.method])
     _cr(
         [

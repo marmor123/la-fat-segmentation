@@ -206,7 +206,7 @@ class TestBatchPipelineInvocation:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -252,7 +252,7 @@ class TestBatchPipelineInvocation:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -294,7 +294,7 @@ class TestBatchPipelineInvocation:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -354,7 +354,7 @@ class TestBatchErrorResilience:
                     patient_id=patient_id,
                     success=False,
                     partition_result=None,
-                    fat_threshold_result=None,
+    
                     pericardium_result=None,
                     cleanup_result=None,
                     quality_flags=[],
@@ -367,7 +367,7 @@ class TestBatchErrorResilience:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -412,7 +412,7 @@ class TestBatchErrorResilience:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -449,7 +449,7 @@ class TestBatchErrorResilience:
                 patient_id=patient_id,
                 success=False,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -505,7 +505,7 @@ class TestConfigPropagation:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -602,7 +602,7 @@ class TestTsPrecomputeIntegration:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -662,7 +662,7 @@ class TestTsPrecomputeIntegration:
                 patient_id=patient_id,
                 success=True,
                 partition_result=None,
-                fat_threshold_result=None,
+
                 pericardium_result=None,
                 cleanup_result=None,
                 quality_flags=[],
@@ -705,7 +705,7 @@ class TestTsPrecomputeIntegration:
             pipeline_calls.append(patient_id)
             return PipelineResult(
                 patient_id=patient_id, success=True,
-                partition_result=None, fat_threshold_result=None,
+                partition_result=None,
                 pericardium_result=None, cleanup_result=None,
                 quality_flags=[], dashboard_output=None,
                 errors=[], warnings=[], total_runtime_seconds=1.0,
@@ -762,7 +762,7 @@ class TestTsPrecomputeIntegration:
             pipeline_calls.append(patient_id)
             return PipelineResult(
                 patient_id=patient_id, success=True,
-                partition_result=None, fat_threshold_result=None,
+                partition_result=None,
                 pericardium_result=None, cleanup_result=None,
                 quality_flags=[], dashboard_output=None,
                 errors=[], warnings=[], total_runtime_seconds=1.0,

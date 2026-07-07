@@ -15,18 +15,15 @@ import yaml
 # Type map for validation: field_name -> expected type
 _FIELD_TYPES: dict[str, type] = {
     "spacing_mm": float,
-    "hu_fallback_low": float,
-    "hu_fallback_high": float,
-    "gaussian_sigma_multiplier": float,
+    "fat_hu_low": float,
+    "fat_hu_high": float,
     "min_pericardium_volume_ml": float,
     "pericardium_dilation_mm": float,
     "min_anchor_volume_ml": float,
     "min_fat_island_volume_mm3": float,
-    "min_sub_zero_voxels_for_fit": int,
     "la_fat_volume_low_ml": float,
     "la_fat_volume_high_ml": float,
     "max_unassigned_fat_pct": float,
-    "max_gaussian_sigma": float,
     "max_lv_la_ratio": float,
     "min_fat_fraction_pct": float,
     "data_dir": str,
@@ -49,9 +46,8 @@ class PipelineConfig:
     spacing_mm: float = 1.5
 
     # --- HU / fat-threshold --------------------------------------------------
-    hu_fallback_low: float = -190.0
-    hu_fallback_high: float = -30.0
-    gaussian_sigma_multiplier: float = 2.0
+    fat_hu_low: float = -190.0
+    fat_hu_high: float = -30.0
 
     # --- Pericardium ---------------------------------------------------------
     min_pericardium_volume_ml: float = 50.0
@@ -62,13 +58,11 @@ class PipelineConfig:
 
     # --- Fat cleanup / filtering ---------------------------------------------
     min_fat_island_volume_mm3: float = 100.0
-    min_sub_zero_voxels_for_fit: int = 1000
 
     # --- Quality flags thresholds --------------------------------------------
     la_fat_volume_low_ml: float = 2.0
     la_fat_volume_high_ml: float = 150.0
     max_unassigned_fat_pct: float = 80.0
-    max_gaussian_sigma: float = 100.0
     max_lv_la_ratio: float = 4.0
     min_fat_fraction_pct: float = 8.0
 

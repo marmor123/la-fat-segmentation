@@ -19,7 +19,6 @@ from la_fat.anatomy import CANONICAL_ANCHORS, voxel_volume_ml
 from la_fat import nifti_io
 from la_fat.cleanup import CleanupResult, cleanup_la_fat_mask
 from la_fat.config import PipelineConfig
-from la_fat.fat_thresholder import FatThresholdResult, compute_fat_threshold
 from la_fat.mesh_extractor import extract_interactive_meshes
 from la_fat.pipeline_types import PipelineArtifacts
 from la_fat.partition_engine import PartitionResult, partition_fat
@@ -90,7 +89,6 @@ class PipelineState:
     ct_direction: np.ndarray = dataclasses.field(default_factory=lambda: np.eye(3))
     loaded_masks: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
     pericardium_result: PericardiumResult | None = None
-    fat_threshold_result: FatThresholdResult | None = None
     partition_result: PartitionResult | None = None
     anchor_masks: dict[str, np.ndarray] = dataclasses.field(default_factory=dict)
     cleanup_result: CleanupResult | None = None
@@ -121,8 +119,6 @@ class PipelineResult:
         ``True`` if the pipeline completed without errors.
     partition_result:
         Result from the partition engine, or ``None`` if partition failed.
-    fat_threshold_result:
-        Result from the fat thresholder, or ``None`` if thresholding failed.
     pericardium_result:
         Result from the pericardium resolver, or ``None`` if resolution
         failed.
@@ -148,7 +144,6 @@ class PipelineResult:
     patient_id: str
     success: bool
     partition_result: PartitionResult | None
-    fat_threshold_result: FatThresholdResult | None
     pericardium_result: PericardiumResult | None
     cleanup_result: CleanupResult | None
     quality_flags: list[QualityFlag]
@@ -178,13 +173,12 @@ def run_fat_extraction_pipeline(
     3. Resample the raw CT to isotropic spacing (or load cached copy).
     4. Load TotalSegmentator masks from disk.
     5. Resolve pericardium (direct or fallback).
-    6. Compute fat HU threshold (Gaussian fit or fallback).
-    7. Partition epicardial fat to nearest anchor surface.
-    8. Clean the LA fat mask (island removal).
-    9. Extract meshes for interactive visualization.
-    10. Generate quality flags.
-    11. Generate QA dashboard.
-    12. Save LA fat mask and quality flags to output directory.
+    6. Partition epicardial fat to nearest anchor surface.
+    7. Clean the LA fat mask (island removal).
+    8. Extract meshes for interactive visualization.
+    9. Generate quality flags.
+    10. Generate QA dashboard.
+    11. Save LA fat mask and quality flags to output directory.
 
     Parameters
     ----------
@@ -250,8 +244,6 @@ def run_fat_extraction_pipeline(
         ("Load TS masks", _step_load_masks, "TS mask loading", True),
         ("Resolve pericardium", _step_resolve_pericardium,
          "Pericardium resolution", True),
-        ("Compute fat threshold", _step_compute_fat_threshold,
-         "Fat threshold", True),
         ("Partition fat", _step_partition_fat, "Fat partition", True),
         ("Cleanup LA fat mask", _step_cleanup, "Cleanup", False),
         ("Extract meshes", _step_extract_meshes, "Mesh extraction", False),
@@ -289,7 +281,6 @@ def run_fat_extraction_pipeline(
         patient_id=patient_id,
         success=success,
         partition_result=state.partition_result,
-        fat_threshold_result=state.fat_threshold_result,
         pericardium_result=state.pericardium_result,
         cleanup_result=state.cleanup_result,
         quality_flags=state.quality_flags,
@@ -413,7 +404,6 @@ def _run_steps(
                     errors=state.errors,
                     warnings=state.warnings,
                     pericardium_result=state.pericardium_result,
-                    fat_threshold_result=state.fat_threshold_result,
                     partition_result=state.partition_result,
                     cleanup_result=state.cleanup_result,
                     quality_flags=state.quality_flags,
@@ -557,44 +547,12 @@ def _step_resolve_pericardium(state: PipelineState) -> None:
     state.pericardium_result = pericardium_result
 
 
-def _step_compute_fat_threshold(state: PipelineState) -> None:
-    """Compute fat HU threshold (pipeline step 4)."""
-    fat_threshold_result = compute_fat_threshold(
-        state.ct_array, state.pericardium_result.mask, state.cfg,
-    )
-    if fat_threshold_result.fallback_triggered:
-        msg = (
-            f"Fat threshold fallback triggered: "
-            f"{fat_threshold_result.fallback_reason}"
-        )
-        state.warnings.append(msg)
-        logger.warning(
-            "[%s] Step %d/%d: %s",
-            _ts(), state.step, state.step_total, msg,
-        )
-    else:
-        logger.info(
-            "[%s] Step %d/%d: Fat threshold — HU range [%.1f, %.1f] "
-            "(mean=%.1f, sigma=%.1f, n=%d)",
-            _ts(), state.step, state.step_total,
-            fat_threshold_result.hu_low,
-            fat_threshold_result.hu_high,
-            fat_threshold_result.mean_hu,
-            fat_threshold_result.sigma_hu,
-            fat_threshold_result.num_voxels_fit,
-        )
-    state.fat_threshold_result = fat_threshold_result
-
-
 def _step_partition_fat(state: PipelineState) -> None:
     """Partition epicardial fat (pipeline step 5, fatal)."""
     partition_result = partition_fat(
         ct_array=state.ct_array,
         pericardium_mask=state.pericardium_result.mask,
-        fat_hu_range=(
-            state.fat_threshold_result.hu_low,
-            state.fat_threshold_result.hu_high,
-        ),
+        fat_hu_range=(state.cfg.fat_hu_low, state.cfg.fat_hu_high),
         anchor_masks=state.anchor_masks,
         config=state.cfg,
         spacing=state.spacing,
@@ -683,7 +641,6 @@ def _step_generate_quality_flags(state: PipelineState) -> None:
     """Generate quality flags (pipeline step 8, non-fatal)."""
     quality_flags = generate_quality_flags(
         partition_result=state.partition_result,
-        fat_threshold_result=state.fat_threshold_result,
         pericardium_result=state.pericardium_result,
         cleanup_result=state.cleanup_result or _empty_cleanup_result(),
         config=state.cfg,
@@ -702,7 +659,6 @@ def _step_generate_dashboard(state: PipelineState) -> None:
         anchor_masks=state.anchor_masks,
         pericardium_result=state.pericardium_result,
         partition_result=state.partition_result,
-        fat_threshold_result=state.fat_threshold_result,
         cleanup_result=state.cleanup_result or _empty_cleanup_result(),
         quality_flags=state.quality_flags,
         config=state.cfg,
@@ -799,11 +755,7 @@ def _step_save_pipeline_result(state: PipelineState) -> None:
             }
             for f in state.quality_flags
         ],
-        fat_hu_range=(
-            (state.fat_threshold_result.hu_low, state.fat_threshold_result.hu_high)
-            if state.fat_threshold_result is not None
-            else (0.0, 0.0)
-        ),
+        fat_hu_range=(state.cfg.fat_hu_low, state.cfg.fat_hu_high),
         voxel_volume_ml=voxel_vol,
         excluded_anchors=(
             list(state.partition_result.excluded_anchors)
@@ -837,7 +789,6 @@ def _build_result(
     errors: list[str],
     warnings: list[str],
     pericardium_result: PericardiumResult | None = None,
-    fat_threshold_result: FatThresholdResult | None = None,
     partition_result: PartitionResult | None = None,
     cleanup_result: CleanupResult | None = None,
     quality_flags: list[QualityFlag] | None = None,
@@ -853,7 +804,6 @@ def _build_result(
         patient_id=patient_id,
         success=False,
         partition_result=partition_result,
-        fat_threshold_result=fat_threshold_result,
         pericardium_result=pericardium_result,
         cleanup_result=cleanup_result,
         quality_flags=quality_flags or [],

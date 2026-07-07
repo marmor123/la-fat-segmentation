@@ -15,7 +15,6 @@ from PIL import Image
 
 from la_fat.config import PipelineConfig
 from la_fat.cleanup import CleanupResult
-from la_fat.fat_thresholder import FatThresholdResult
 from la_fat.partition_engine import PartitionResult
 from la_fat.pericardium_resolver import PericardiumResult
 from la_fat.quality_flagger import QualityFlag
@@ -101,21 +100,10 @@ def _build_shared_data(output_dir: str) -> dict:
         method="ts_direct",
     )
 
-    fat_threshold_result = FatThresholdResult(
-        hu_low=-190.0,
-        hu_high=-30.0,
-        mean_hu=-110.0,
-        sigma_hu=40.0,
-        fallback_triggered=False,
-        fallback_reason=None,
-        method="gaussian_fit",
-        num_voxels_fit=5000,
-    )
-
     from scipy.ndimage import binary_dilation
 
-    in_hu = (ct_array >= fat_threshold_result.hu_low) & (
-        ct_array <= fat_threshold_result.hu_high
+    in_hu = (ct_array >= CFG.fat_hu_low) & (
+        ct_array <= CFG.fat_hu_high
     )
     fat_mask = pericardium_mask & in_hu
 
@@ -180,7 +168,6 @@ def _build_shared_data(output_dir: str) -> dict:
         "anchor_masks": anchor_masks,
         "pericardium_result": pericardium_result,
         "partition_result": partition_result,
-        "fat_threshold_result": fat_threshold_result,
         "cleanup_result": cleanup_result,
         "quality_flags": quality_flags,
         "config": CFG,
@@ -281,11 +268,10 @@ class TestSummaryTable:
             text = f.read()
         assert PATIENT_ID in text
 
-    def test_contains_fat_threshold_info(self, shared_dashboard):
+    def test_contains_pericardium_info(self, shared_dashboard):
         with open(shared_dashboard.summary_table_path) as f:
             text = f.read()
-        assert "hu_low" in text.lower() or "-190" in text
-        assert "hu_high" in text.lower() or "-30" in text
+        assert "Pericardium" in text
 
     def test_contains_la_volume(self, shared_dashboard):
         with open(shared_dashboard.summary_table_path) as f:

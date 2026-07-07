@@ -244,7 +244,6 @@ class TestPipelineEndToEnd:
         assert result.success, f"Pipeline failed: {result.errors}"
         assert result.patient_id == patient_id
         assert result.pericardium_result is not None
-        assert result.fat_threshold_result is not None
         assert result.partition_result is not None
         assert result.cleanup_result is not None
         assert result.total_runtime_seconds > 0
@@ -517,7 +516,6 @@ class TestMeshExtraction:
             patient_id="test",
             success=True,
             partition_result=None,
-            fat_threshold_result=None,
             pericardium_result=None,
             cleanup_result=None,
             quality_flags=[],

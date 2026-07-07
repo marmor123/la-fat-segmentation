@@ -16,17 +16,13 @@ class TestPipelineConfigDefaults:
         cfg = PipelineConfig()
         assert cfg.spacing_mm == 1.5
 
-    def test_default_hu_fallback_low(self):
+    def test_default_fat_hu_low(self):
         cfg = PipelineConfig()
-        assert cfg.hu_fallback_low == -190.0
+        assert cfg.fat_hu_low == -190.0
 
-    def test_default_hu_fallback_high(self):
+    def test_default_fat_hu_high(self):
         cfg = PipelineConfig()
-        assert cfg.hu_fallback_high == -30.0
-
-    def test_default_gaussian_sigma_multiplier(self):
-        cfg = PipelineConfig()
-        assert cfg.gaussian_sigma_multiplier == 2.0
+        assert cfg.fat_hu_high == -30.0
 
     def test_default_min_pericardium_volume_ml(self):
         cfg = PipelineConfig()
@@ -44,10 +40,6 @@ class TestPipelineConfigDefaults:
         cfg = PipelineConfig()
         assert cfg.min_fat_island_volume_mm3 == 100.0
 
-    def test_default_min_sub_zero_voxels_for_fit(self):
-        cfg = PipelineConfig()
-        assert cfg.min_sub_zero_voxels_for_fit == 1000
-
     def test_default_la_fat_volume_low_ml(self):
         cfg = PipelineConfig()
         assert cfg.la_fat_volume_low_ml == 2.0
@@ -59,10 +51,6 @@ class TestPipelineConfigDefaults:
     def test_default_max_unassigned_fat_pct(self):
         cfg = PipelineConfig()
         assert cfg.max_unassigned_fat_pct == 80.0
-
-    def test_default_max_gaussian_sigma(self):
-        cfg = PipelineConfig()
-        assert cfg.max_gaussian_sigma == 100.0
 
     def test_default_data_dir(self):
         cfg = PipelineConfig()
@@ -96,8 +84,8 @@ class TestPipelineConfigFromYaml:
         """Loading a valid YAML file should return a PipelineConfig with those values."""
         data = {
             "spacing_mm": 2.0,
-            "hu_fallback_low": -200.0,
-            "hu_fallback_high": -40.0,
+            "fat_hu_low": -200.0,
+            "fat_hu_high": -40.0,
         }
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False
@@ -107,8 +95,8 @@ class TestPipelineConfigFromYaml:
         try:
             cfg = PipelineConfig.from_yaml(path)
             assert cfg.spacing_mm == 2.0
-            assert cfg.hu_fallback_low == -200.0
-            assert cfg.hu_fallback_high == -40.0
+            assert cfg.fat_hu_low == -200.0
+            assert cfg.fat_hu_high == -40.0
         finally:
             os.unlink(path)
 
@@ -143,8 +131,7 @@ class TestPipelineConfigFromYaml:
             # Provided value
             assert cfg.spacing_mm == 1.0
             # Defaults for everything else
-            assert cfg.hu_fallback_low == -190.0
-            assert cfg.gaussian_sigma_multiplier == 2.0
+            assert cfg.fat_hu_low == -190.0
             assert cfg.min_pericardium_volume_ml == 50.0
             assert cfg.data_dir == "data"
         finally:
@@ -174,6 +161,6 @@ class TestPipelineConfigFromYaml:
         try:
             cfg = PipelineConfig.from_yaml(path)
             assert cfg.spacing_mm == 1.5
-            assert cfg.hu_fallback_low == -190.0
+            assert cfg.fat_hu_low == -190.0
         finally:
             os.unlink(path)

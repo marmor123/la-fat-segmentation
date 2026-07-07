@@ -301,7 +301,6 @@ src/la_fat/
 ├── cleanup.py              Island removal from LA fat mask
 ├── cli.py                  Single-patient CLI entry point
 ├── config.py               PipelineConfig frozen dataclass (YAML-loadable)
-├── fat_thresholder.py      Per-patient Gaussian HU threshold
 ├── interactive_dashboard.py Panel + PyVista 3D QA dashboard
 ├── mesh_extractor.py       Marching cubes mesh extraction
 ├── nifti_io.py             NIfTI read/write helpers

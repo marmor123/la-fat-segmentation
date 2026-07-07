@@ -123,13 +123,6 @@ def _print_cli_summary(result: PipelineResult) -> None:
                 result.pericardium_result.fallback_reason or "",
             ))
 
-    if result.fat_threshold_result is not None:
-        add("  Fat range:    [{0:.1f}, {1:.1f}] HU  ({2})".format(
-            result.fat_threshold_result.hu_low,
-            result.fat_threshold_result.hu_high,
-            result.fat_threshold_result.method,
-        ))
-
     if result.partition_result is not None:
         la_vol = result.partition_result.anchor_volumes_ml.get("LA", 0.0)
         total = result.partition_result.total_fat_volume_ml

@@ -16,7 +16,6 @@ import typing as t
 
 from la_fat.config import PipelineConfig
 from la_fat.cleanup import CleanupResult
-from la_fat.fat_thresholder import FatThresholdResult
 from la_fat.partition_engine import PartitionResult
 from la_fat.pericardium_resolver import PericardiumResult
 
@@ -54,7 +53,6 @@ class QualityFlag:
 
 def generate_quality_flags(
     partition_result: PartitionResult,
-    fat_threshold_result: FatThresholdResult,
     pericardium_result: PericardiumResult,
     cleanup_result: CleanupResult,
     config: PipelineConfig,
@@ -68,8 +66,6 @@ def generate_quality_flags(
     ----------
     partition_result:
         Result from ``partition_fat``.
-    fat_threshold_result:
-        Result from ``compute_fat_threshold``.
     pericardium_result:
         Result from ``resolve_pericardium``.
     cleanup_result:
@@ -116,21 +112,6 @@ def generate_quality_flags(
                     f"Anchor(s) excluded: {excluded_list}"
                 ),
                 threshold_value=config.min_anchor_volume_ml,
-                actual_value=None,
-            )
-        )
-
-    # Fat threshold fallback triggered.
-    if fat_threshold_result.fallback_triggered:
-        flags.append(
-            QualityFlag(
-                severity="high",
-                concern="fat_threshold_fallback",
-                detail=(
-                    f"Fat threshold used fallback: "
-                    f"{fat_threshold_result.fallback_reason or 'unknown'}"
-                ),
-                threshold_value=None,
                 actual_value=None,
             )
         )
@@ -212,50 +193,6 @@ def generate_quality_flags(
                     actual_value=fat_fraction_pct,
                 )
             )
-
-    # ── LOW CONCERN ──────────────────────────────────────────────────────────
-
-    # Wide Gaussian sigma (fit succeeded but spread is unusually large).
-    if fat_threshold_result.sigma_hu > config.max_gaussian_sigma:
-        flags.append(
-            QualityFlag(
-                severity="low",
-                concern="wide_gaussian_sigma",
-                detail=(
-                    f"Gaussian sigma {fat_threshold_result.sigma_hu:.2f} exceeds "
-                    f"threshold {config.max_gaussian_sigma}"
-                ),
-                threshold_value=config.max_gaussian_sigma,
-                actual_value=fat_threshold_result.sigma_hu,
-            )
-        )
-
-    # HU range clamped to fallback bounds (partial — fit succeeded, but
-    # one or both tails were cut).  Only when fallback was NOT triggered
-    # (full fallback is a separate high-concern flag).
-    if (
-        not fat_threshold_result.fallback_triggered
-        and (fat_threshold_result.clamped_low or fat_threshold_result.clamped_high)
-    ):
-        clamped_parts: list[str] = []
-        if fat_threshold_result.clamped_low:
-            clamped_parts.append("lower bound")
-        if fat_threshold_result.clamped_high:
-            clamped_parts.append("upper bound")
-        flags.append(
-            QualityFlag(
-                severity="low",
-                concern="hu_range_clamped",
-                detail=(
-                    f"Per-patient fat HU range clamped to fixed fallback at "
-                    f"{' and '.join(clamped_parts)} (fitted range would have "
-                    f"exceeded [{config.hu_fallback_low}, "
-                    f"{config.hu_fallback_high}])"
-                ),
-                threshold_value=None,
-                actual_value=None,
-            )
-        )
 
     # Return flags sorted by severity order.
     severity_order = {"high": 0, "medium": 1, "low": 2}
