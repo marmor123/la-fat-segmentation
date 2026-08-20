@@ -85,3 +85,20 @@ In CT imaging, because slice thickness is $1.5\text{ mm}$, a voxel sitting on th
 - **Dual-Mode Pipeline Architecture:**
   - *Fast QA Mode ($1.5\text{ mm}$):* ~2 sec/scan for instant slice gallery and quality flag screening.
   - *Native Radiomics Mode ($0.35\text{ mm}$):* High-fidelity voxel-for-voxel mask generation for radiomics feature extraction.
+
+---
+
+## 7. Trade-offs of Upper Bound Selection: Why Adaptive Gaussian Outperforms Fixed Thresholds
+
+### 7.1 Risks of a Blind `0.0 HU` Hard Cutoff at Native Resolution
+At high native resolution ($0.35\text{ mm}$ in-plane), the physical partial-volume transition ribbon is much narrower ($0.35\text{ mm}$ wide vs. $1.5\text{ mm}$). Extending an unconstrained hard cutoff up to `0.0 HU` carries specific risks:
+1. **Fibrous & Myocardial Contamination:** If a chamber mask has a sub-voxel gap or contour imperfection, voxels in `[-20, 0]` HU may contain non-adipose fibrous pericardium, micro-vessels, or myocardial wall tissue.
+2. **Radiomics Feature Distortion:** In PyRadiomics texture extraction, including high-attenuation partial-volume voxels creates an artificial perimeter gradient that can inflate GLCM entropy and skew intensity kurtosis.
+
+### 7.2 The Statistical Solution: Trimmed Gaussian ($\mu + 2\sigma$) Clamped at `0.0 HU`
+Rather than choosing between two rigid fixed windows (`-30` vs. `0` HU), the **Trimmed Gaussian Peak Fit** provides the principled, patient-adaptive solution:
+- **Narrow Clean Peak (High SNR):** If $\mu = -95\text{ HU}, \sigma = 18\text{ HU}$, the upper bound lands naturally at $\mu + 2\sigma = -59\text{ HU}$ (preventing soft-tissue over-reach).
+- **Broad Transition / Partial Volume (Low-Dose CT):** If $\mu = -85\text{ HU}, \sigma = 28\text{ HU}$, the upper bound naturally extends to $\mu + 2\sigma = -29\text{ HU}$ up to the physical ceiling of `0.0 HU`.
+- **Dual-Metric Output Contract:** The pipeline always computes and exports **both** metrics in its summary tables:
+  1. `la_fat_volume_adaptive_ml`: Derived from patient-specific $[\mu - 2\sigma, \min(\mu + 2\sigma, 0.0)]\text{ HU}$ (scanner software correspondence).
+  2. `la_fat_volume_conservative_ml`: Derived from standard fixed $[-190.0, -30.0]\text{ HU}$ (clinical literature standard).
