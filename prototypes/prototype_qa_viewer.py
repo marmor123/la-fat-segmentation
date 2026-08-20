@@ -1,7 +1,8 @@
 """
 Prototype generator for Ticket 5: Lightweight Zero-Footprint QA Slice Viewer UI.
 Generates realistic multi-patient cardiac CT slices, anatomical masks, Gaussian fit curves,
-and packages everything into a self-contained, rich, interactive HTML prototype with 3 switchable UI variants.
+and packages everything into a self-contained, rich, interactive HTML prototype with top tabs,
+synchronized multi-planar crosshairs, and rich 3D inspection controls.
 """
 
 import json
@@ -95,15 +96,14 @@ def create_synthetic_patient_volume(patient_id: str, shape=(60, 80, 80)):
     pa_cz, pa_cy, pa_cx = cz + 15, cy + 7, cx - 4
     pa_mask = (((z_coords - pa_cz)/9)**2 + ((y_coords - pa_cy)/7)**2 + ((x_coords - pa_cx)/7)**2) <= 1.0
     
-    # Combine heart chambers (Blood pool: 80-120 HU in non-contrast/native)
+    # Combine heart chambers (Blood pool: 75 HU in non-contrast/native)
     chambers = la_mask | lv_mask | ra_mask | rv_mask | ao_mask | pa_mask
     ct[chambers] = 75.0
     
     # Epicardial Fat layer (Inside pericardium, outside chambers)
     fat_space = pericardium & (~chambers)
     
-    # Distance transform from LA surface for partition
-    # Assign fat around LA to LA-fat
+    # Distance transform from chamber surfaces for partition
     la_surface_dist = np.sqrt((z_coords - la_cz)**2 + (y_coords - la_cy)**2 + (x_coords - la_cx)**2) - la_rad[1]
     lv_surface_dist = np.sqrt((z_coords - lv_cz)**2 + (y_coords - lv_cy)**2 + (x_coords - lv_cx)**2) - 14
     ra_surface_dist = np.sqrt((z_coords - ra_cz)**2 + (y_coords - ra_cy)**2 + (x_coords - ra_cx)**2) - 11
@@ -111,7 +111,6 @@ def create_synthetic_patient_volume(patient_id: str, shape=(60, 80, 80)):
     ao_surface_dist = np.sqrt((z_coords - ao_cz)**2 + (y_coords - ao_cy)**2 + (x_coords - ao_cx)**2) - 7
     pa_surface_dist = np.sqrt((z_coords - pa_cz)**2 + (y_coords - pa_cy)**2 + (x_coords - pa_cx)**2) - 7
     
-    # Fat mask where fat exists (closer to myocardium)
     min_dist_to_any_chamber = np.minimum.reduce([
         la_surface_dist, lv_surface_dist, ra_surface_dist, rv_surface_dist, ao_surface_dist, pa_surface_dist
     ])
@@ -196,20 +195,17 @@ def render_slice_layers(patient_data, slice_idx, plane="axial"):
     img_ct = Image.fromarray(ct_gray, mode='L').convert('RGB')
     
     # 2. Pericardium Outline Mask (Lime Green #22c55e outline)
-    # Find boundary via simple gradient
     peri_contour = np.zeros((h, w, 4), dtype=np.uint8)
     if np.any(peri_s):
-        # Dilate - Erode for 1px outline
         from scipy.ndimage import binary_dilation, binary_erosion
         try:
             outline = binary_dilation(peri_s) ^ binary_erosion(peri_s)
         except Exception:
             outline = peri_s
-        peri_contour[outline] = [34, 197, 94, 230] # #22c55e
+        peri_contour[outline] = [34, 197, 94, 240] # #22c55e
     img_peri = Image.fromarray(peri_contour, mode='RGBA')
     
     # 3. TS 6 Anchors Fill
-    # LA: Coral Red (#ef4444), LV: Royal Blue (#3b82f6), RA: Cyan (#06b6d4), RV: Orange (#f97316), Ao: Magenta (#d946ef), PA: Yellow (#eab308)
     anchors_rgba = np.zeros((h, w, 4), dtype=np.uint8)
     anchors_rgba[la_s] = [239, 68, 68, 140]
     anchors_rgba[lv_s] = [59, 130, 246, 140]
@@ -262,10 +258,10 @@ def generate_all_patients_payload():
         print(f"Generating synthetic 3D cardiac volume for Patient {pid}...")
         pdata = create_synthetic_patient_volume(pid)
         
-        # Sample key slices for fast loading (25 axial slices, 15 coronal, 15 sagittal)
+        # Dense sampling for smooth scrolling across all 3 planes
         axial_indices = list(range(15, 45))
-        coronal_indices = list(range(25, 55, 2))
-        sagittal_indices = list(range(25, 55, 2))
+        coronal_indices = list(range(20, 60))
+        sagittal_indices = list(range(20, 60))
         
         slices_axial = {}
         for idx in axial_indices:
@@ -295,7 +291,7 @@ def generate_all_patients_payload():
     return patients
 
 def build_prototype_html(patients_data):
-    """Builds the standalone HTML prototype containing all 3 UI variants with the switcher bar."""
+    """Builds the standalone HTML prototype containing all 3 UI variants with top navigation tabs."""
     patients_json = json.dumps(patients_data)
     
     html_content = f"""<!DOCTYPE html>
@@ -303,13 +299,13 @@ def build_prototype_html(patients_data):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LA-FAT QA Viewer Prototype — Ticket 5</title>
+<title>LA-FAT QA Viewer — Verified Production Layout</title>
 <style>
 :root {{
   --bg-primary: #0a0d14;
   --bg-secondary: #121824;
   --bg-card: #182234;
-  --bg-glass: rgba(24, 34, 52, 0.85);
+  --bg-glass: rgba(24, 34, 52, 0.90);
   --border-color: #26354a;
   --border-focus: #3b82f6;
   --text-main: #f1f5f9;
@@ -339,7 +335,7 @@ body {{
 
 /* Top App Header */
 header {{
-  height: 52px;
+  height: 54px;
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   display: flex;
@@ -365,6 +361,39 @@ header {{
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
+}}
+
+/* Top Navigation Tabs */
+.top-nav-tabs {{
+  display: flex;
+  background: var(--bg-primary);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  gap: 4px;
+}}
+.top-tab-btn {{
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}}
+.top-tab-btn:hover {{
+  color: var(--text-main);
+  background: rgba(255,255,255,0.05);
+}}
+.top-tab-btn.active {{
+  background: var(--accent-blue);
+  color: white;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
 }}
 
 .header-controls {{
@@ -658,7 +687,22 @@ header {{
   background: rgba(0,0,0,0.7);
   padding: 2px 6px;
   border-radius: 3px;
+  z-index: 10;
 }}
+.ortho-scrubber {{
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  right: 6px;
+  background: rgba(0,0,0,0.7);
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 10;
+}}
+.ortho-scrubber input {{ flex: 1; }}
 
 /* =========================================================================
    VARIANT B: Cohort Scorecard & Focus Inspector
@@ -807,7 +851,7 @@ table.cohort-table tr:hover:not(.active-patient) {{
    ========================================================================= */
 #variant-c {{
   display: none;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: 280px 1fr 340px;
   gap: 12px;
   height: 100%;
 }}
@@ -893,76 +937,6 @@ table.cohort-table tr:hover:not(.active-patient) {{
   line-height: 1.5;
 }}
 
-/* =========================================================================
-   FLOATING PROTOTYPE SWITCHER (Mandatory Skill Requirement)
-   ========================================================================= */
-#prototype-switcher {{
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #0f172a;
-  border: 1px solid #334155;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255,255,255,0.1);
-  border-radius: 30px;
-  padding: 6px 14px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  z-index: 100;
-  backdrop-filter: blur(12px);
-}}
-
-.switcher-btn {{
-  background: #1e293b;
-  border: 1px solid #475569;
-  color: #f8fafc;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: bold;
-  transition: all 0.15s ease;
-}}
-.switcher-btn:hover {{
-  background: var(--accent-blue);
-  border-color: var(--accent-blue);
-  transform: scale(1.1);
-}}
-
-.switcher-info {{
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}}
-.switcher-tag {{
-  font-size: 9px;
-  color: #94a3b8;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  font-weight: 800;
-}}
-.switcher-title {{
-  font-size: 13px;
-  font-weight: 700;
-  color: #f8fafc;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}}
-.switcher-key {{
-  background: #334155;
-  color: #cbd5e1;
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-}}
-
 </style>
 </head>
 <body>
@@ -971,7 +945,20 @@ table.cohort-table tr:hover:not(.active-patient) {{
 <header>
   <div class="brand">
     <span>LA-FAT QA STUDIO</span>
-    <span class="brand-badge">Ticket 5 Prototype</span>
+    <span class="brand-badge">Production QA</span>
+  </div>
+  
+  <!-- Primary Top Navigation Tabs -->
+  <div class="top-nav-tabs">
+    <button class="top-tab-btn active" id="tab-btn-b" onclick="setVariantById('B')">
+      <span>📊</span> Cohort Scorecard
+    </button>
+    <button class="top-tab-btn" id="tab-btn-a" onclick="setVariantById('A')">
+      <span>🩻</span> Multi-Planar PACS
+    </button>
+    <button class="top-tab-btn" id="tab-btn-c" onclick="setVariantById('C')">
+      <span>🧊</span> 3D Colleague Studio
+    </button>
   </div>
   
   <div class="header-controls">
@@ -1073,7 +1060,7 @@ table.cohort-table tr:hover:not(.active-patient) {{
         </div>
         
         <div style="margin-top:20px;">
-          <div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:8px;">SLICE NAVIGATION</div>
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:8px;">AXIAL SLICE (Z)</div>
           <div style="display:flex; align-items:center; gap:8px;">
             <input type="range" id="slice-slider-a" style="flex:1;" min="15" max="44" value="34">
             <span id="slice-num-a" style="font-family:var(--font-mono); font-size:12px; font-weight:bold;">34</span>
@@ -1109,15 +1096,23 @@ table.cohort-table tr:hover:not(.active-patient) {{
       </div>
     </div>
     
-    <!-- Right Orthogonal Multi-Planar Views -->
+    <!-- Right Orthogonal Multi-Planar Views (Coronal & Sagittal) -->
     <div class="orthogonal-side-stack">
       <div class="ortho-subview">
-        <span class="ortho-title">CORONAL Y: 40</span>
+        <span class="ortho-title">CORONAL PLANE (Y: <span id="coronal-num">40</span>)</span>
         <img id="img-coronal-a" src="" alt="Coronal">
+        <div class="ortho-scrubber">
+          <span style="font-size:10px; color:#cbd5e1;">Y:</span>
+          <input type="range" id="slider-coronal" min="20" max="59" value="40">
+        </div>
       </div>
       <div class="ortho-subview">
-        <span class="ortho-title">SAGITTAL X: 40</span>
+        <span class="ortho-title">SAGITTAL PLANE (X: <span id="sagittal-num">40</span>)</span>
         <img id="img-sagittal-a" src="" alt="Sagittal">
+        <div class="ortho-scrubber">
+          <span style="font-size:10px; color:#cbd5e1;">X:</span>
+          <input type="range" id="slider-sagittal" min="20" max="59" value="40">
+        </div>
       </div>
     </div>
   </div>
@@ -1125,7 +1120,7 @@ table.cohort-table tr:hover:not(.active-patient) {{
   <!-- =========================================================================
        VARIANT B: Cohort Scorecard & Focus Inspector
        ========================================================================= -->
-  <div id="variant-b" class="variant-view">
+  <div id="variant-b" class="variant-view active">
     <!-- Top Cohort Table -->
     <div class="cohort-table-card">
       <div class="panel-header">
@@ -1208,27 +1203,84 @@ table.cohort-table tr:hover:not(.active-patient) {{
        VARIANT C: Colleague 3D Presentation Studio
        ========================================================================= -->
   <div id="variant-c" class="variant-view">
-    <!-- Left Interactive 3D Cardiac Stage -->
+    <!-- Left 3D Controls & Anatomical Legend -->
+    <div class="sidebar-panel">
+      <div class="panel-header">
+        <span>3D Chamber Meshes</span>
+      </div>
+      <div class="panel-content">
+        <div class="layer-toggle-group">
+          <label class="layer-row" style="background:rgba(250,204,21,0.1); border-color:rgba(250,204,21,0.3);">
+            <div class="layer-label">
+              <span class="layer-dot" style="background:#facc15;"></span>
+              <span style="font-weight:bold; color:#facc15;">LA Fat Volume</span>
+            </div>
+            <input type="checkbox" id="m3d-la-fat" checked>
+          </label>
+          
+          <label class="layer-row">
+            <div class="layer-label">
+              <span class="layer-dot" style="background:#22c55e;"></span>
+              <span>Pericardium Sac Envelope</span>
+            </div>
+            <input type="checkbox" id="m3d-peri" checked>
+          </label>
+          
+          <label class="layer-row">
+            <div class="layer-label">
+              <span class="layer-dot" style="background:#ef4444;"></span>
+              <span>Left Atrium (LA) Surface</span>
+            </div>
+            <input type="checkbox" id="m3d-la" checked>
+          </label>
+          
+          <label class="layer-row">
+            <div class="layer-label">
+              <span class="layer-dot" style="background:#3b82f6;"></span>
+              <span>Left Ventricle (LV) Surface</span>
+            </div>
+            <input type="checkbox" id="m3d-lv" checked>
+          </label>
+          
+          <label class="layer-row">
+            <div class="layer-label">
+              <span class="layer-dot" style="background:#d946ef;"></span>
+              <span>Aorta / Great Vessels</span>
+            </div>
+            <input type="checkbox" id="m3d-ao" checked>
+          </label>
+        </div>
+        
+        <div style="margin-top:20px;">
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:8px;">SURFACE OPACITY</div>
+          <input type="range" id="m3d-opacity" style="width:100%;" min="20" max="100" value="85">
+        </div>
+        
+        <div style="margin-top:20px;">
+          <div style="font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:8px;">CAMERA PRESETS</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <button class="btn btn-primary" id="btn-cam-ant">Anterior</button>
+            <button class="btn" id="btn-cam-post">Posterior</button>
+            <button class="btn" id="btn-cam-lat">Left Lateral</button>
+            <button class="btn" id="btn-cam-4ch">4-Chamber</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Center Interactive 3D Cardiac Stage -->
     <div class="stage-3d" id="stage-3d">
       <canvas id="canvas-3d" class="stage-3d-canvas"></canvas>
       
-      <div class="stage-3d-controls">
-        <div class="angle-btn-group">
-          <button class="angle-btn active" id="btn-cam-ant">Anterior</button>
-          <button class="angle-btn" id="btn-cam-post">Posterior</button>
-          <button class="angle-btn" id="btn-cam-lat">Lateral</button>
-          <button class="angle-btn" id="btn-cam-4ch">4-Chamber</button>
-        </div>
-        <div style="font-size:10px; color:#cbd5e1; background:rgba(0,0,0,0.6); padding:3px 6px; border-radius:4px;">
-          🖱️ Click & Drag to Orbit 3D Heart Mesh
-        </div>
+      <div style="position:absolute; bottom:14px; left:50%; transform:translateX(-50%); font-size:11px; color:#cbd5e1; background:rgba(0,0,0,0.6); padding:4px 10px; border-radius:20px; backdrop-filter:blur(6px);">
+        🖱️ Click & Drag to Orbit 3D Heart Mesh | Mouse Wheel to Zoom
       </div>
     </div>
     
     <!-- Right Colleague Presentation Sidebar -->
     <div class="presentation-sidebar">
       <div class="panel-header" style="background:transparent; padding:0; border:none;">
-        <span>Presentation Slide Deck</span>
+        <span>Presentation Highlights</span>
       </div>
       
       <div class="slide-deck-card">
@@ -1251,7 +1303,7 @@ table.cohort-table tr:hover:not(.active-patient) {{
         <div class="slide-deck-title">3. Zero-Footprint Radiomics Export</div>
         <div class="slide-deck-body">
           Dual-grid architecture outputs both 1.5mm isotropic screening masks and native 0.35mm CT masks
-          fully compliant with IBSI standardization for PyRadiomics feature extraction.
+          fully compliant with IBSI standardization for PyRadiomics texture analysis.
         </div>
       </div>
       
@@ -1263,66 +1315,48 @@ table.cohort-table tr:hover:not(.active-patient) {{
 
 </div>
 
-<!-- =========================================================================
-     FLOATING PROTOTYPE SWITCHER (Mandatory Skill Requirement)
-     ========================================================================= -->
-<div id="prototype-switcher">
-  <button class="switcher-btn" id="switcher-prev" title="Previous Variant (Left Arrow)">◀</button>
-  
-  <div class="switcher-info">
-    <span class="switcher-tag">Ticket 5 UI Prototype</span>
-    <span class="switcher-title">
-      <span id="current-variant-name">Variant A — Radiology PACS Layout</span>
-      <span class="switcher-key" id="current-variant-key">?variant=A</span>
-    </span>
-  </div>
-  
-  <button class="switcher-btn" id="switcher-next" title="Next Variant (Right Arrow)">▶</button>
-</div>
-
 <script>
 // Load generated synthetic multi-patient cohort data
 const cohortData = {patients_json};
 
-// Available prototype variants
-const variants = [
-  {{ id: 'A', name: 'Variant A — Radiology PACS Layout', key: '?variant=A' }},
-  {{ id: 'B', name: 'Variant B — Cohort Scorecard & Focus Inspector', key: '?variant=B' }},
-  {{ id: 'C', name: 'Variant C — 3D Presentation Studio', key: '?variant=C' }}
-];
-
-let currentVariantIndex = 0;
 let currentPatientId = "0674";
 let currentAxialSlice = 34;
+let currentCoronalSlice = 40;
+let currentSagittalSlice = 40;
+let currentTabId = "B";
+
 let curtainActive = false;
 let curtainX = 0.5;
 
-// URL Query Param handling
-function getVariantFromUrl() {{
-  const urlParams = new URLSearchParams(window.location.search);
-  const v = urlParams.get('variant');
-  const foundIdx = variants.findIndex(x => x.id === v);
-  return foundIdx >= 0 ? foundIdx : 0;
-}}
+// 3D Mesh Visibility States
+let meshState = {{
+  laFat: true,
+  peri: true,
+  la: true,
+  lv: true,
+  ao: true,
+  opacity: 0.85
+}};
 
-function setVariant(idx) {{
-  currentVariantIndex = (idx + variants.length) % variants.length;
-  const current = variants[currentVariantIndex];
+function setVariantById(tabId) {{
+  currentTabId = tabId;
   
-  // Update UI views
+  // Highlight top tab buttons
+  document.querySelectorAll('.top-tab-btn').forEach(btn => btn.classList.remove('active'));
+  const activeBtn = document.getElementById(`tab-btn-${{tabId.toLowerCase()}}`);
+  if (activeBtn) activeBtn.classList.add('active');
+  
+  // Switch view
   document.querySelectorAll('.variant-view').forEach(el => el.classList.remove('active'));
-  document.getElementById(`variant-${{current.id.toLowerCase()}}`).classList.add('active');
+  const activeView = document.getElementById(`variant-${{tabId.toLowerCase()}}`);
+  if (activeView) activeView.classList.add('active');
   
-  // Update Switcher Bar
-  document.getElementById('current-variant-name').textContent = current.name;
-  document.getElementById('current-variant-key').textContent = current.key;
-  
-  // Update URL without page reload
+  // Update URL param
   const url = new URL(window.location);
-  url.searchParams.set('variant', current.id);
+  url.searchParams.set('tab', tabId);
   window.history.replaceState({{}}, '', url);
   
-  if (current.id === 'C') {{
+  if (tabId === 'C') {{
     init3DStage();
   }}
 }}
@@ -1351,12 +1385,17 @@ function updatePatientView() {{
   document.getElementById('hud-patient').textContent = p.id;
   document.getElementById('hud-la-vol').textContent = `${{p.metrics.la_vol_adaptive}} mL`;
   
-  // Clamp slice
-  const minZ = p.axial_range[0];
-  const maxZ = p.axial_range[1];
-  if (currentAxialSlice < minZ) currentAxialSlice = minZ;
-  if (currentAxialSlice > maxZ) currentAxialSlice = maxZ;
+  // Clamp slice ranges
+  const minZ = p.axial_range[0], maxZ = p.axial_range[1];
+  currentAxialSlice = Math.max(minZ, Math.min(maxZ, currentAxialSlice));
   
+  const minY = p.coronal_range[0], maxY = p.coronal_range[1];
+  currentCoronalSlice = Math.max(minY, Math.min(maxY, currentCoronalSlice));
+  
+  const minX = p.sagittal_range[0], maxX = p.sagittal_range[1];
+  currentSagittalSlice = Math.max(minX, Math.min(maxX, currentSagittalSlice));
+  
+  // Axial Slice Slices
   const sliceObj = p.slices.axial[currentAxialSlice];
   if (sliceObj) {{
     // Variant A images
@@ -1374,11 +1413,20 @@ function updatePatientView() {{
     document.getElementById('img-pv-b').src = sliceObj.pv_zone;
   }}
   
-  // Orthogonal views
-  const corObj = p.slices.coronal[39] || p.slices.coronal[p.coronal_range[0]];
-  if (corObj) document.getElementById('img-coronal-a').src = corObj.ct;
-  const sagObj = p.slices.sagittal[39] || p.slices.sagittal[p.sagittal_range[0]];
-  if (sagObj) document.getElementById('img-sagittal-a').src = sagObj.ct;
+  // Coronal & Sagittal Views in Variant A
+  const corObj = p.slices.coronal[currentCoronalSlice];
+  if (corObj) {{
+    document.getElementById('img-coronal-a').src = corObj.ct;
+    document.getElementById('coronal-num').textContent = currentCoronalSlice;
+    document.getElementById('slider-coronal').value = currentCoronalSlice;
+  }}
+  
+  const sagObj = p.slices.sagittal[currentSagittalSlice];
+  if (sagObj) {{
+    document.getElementById('img-sagittal-a').src = sagObj.ct;
+    document.getElementById('sagittal-num').textContent = currentSagittalSlice;
+    document.getElementById('slider-sagittal').value = currentSagittalSlice;
+  }}
   
   // Sliders and HUD
   document.getElementById('slice-slider-a').value = currentAxialSlice;
@@ -1427,7 +1475,6 @@ function updatePatientView() {{
     }}
   }});
   
-  // Cohort table rows
   renderCohortTable();
 }}
 
@@ -1468,6 +1515,7 @@ function renderCohortTable() {{
 
 // 3D Canvas Raycasting / Rotating Mockup
 let rotX = 0.3, rotY = -0.6;
+let scale3D = 1.0;
 function init3DStage() {{
   const canvas = document.getElementById('canvas-3d');
   if (!canvas) return;
@@ -1479,47 +1527,68 @@ function init3DStage() {{
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
-    const size = Math.min(canvas.width, canvas.height) * 0.28;
+    const baseSize = Math.min(canvas.width, canvas.height) * 0.28 * scale3D;
     
-    // Draw wireframe/shaded cardiac chambers
     ctx.save();
     ctx.translate(cx, cy);
     
     // Pericardium sac (Translucent Green)
-    ctx.beginPath();
-    ctx.ellipse(0, 0, size * 1.3, size * 1.5, rotY * 0.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(34, 197, 94, 0.12)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.6)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    if (meshState.peri) {{
+      ctx.beginPath();
+      ctx.ellipse(0, 0, baseSize * 1.3, baseSize * 1.5, rotY * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(34, 197, 94, ${{meshState.opacity * 0.15}})`;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(34, 197, 94, 0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }}
     
     // LA Chamber (Red)
-    const laX = Math.sin(rotY) * size * 0.4;
-    const laY = -Math.cos(rotX) * size * 0.5;
-    ctx.beginPath();
-    ctx.arc(laX, laY, size * 0.45, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.6)';
-    ctx.fill();
-    ctx.strokeStyle = '#ef4444';
-    ctx.stroke();
+    const laX = Math.sin(rotY) * baseSize * 0.4;
+    const laY = -Math.cos(rotX) * baseSize * 0.5;
+    if (meshState.la) {{
+      ctx.beginPath();
+      ctx.arc(laX, laY, baseSize * 0.45, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(239, 68, 68, ${{meshState.opacity * 0.65}})`;
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.stroke();
+    }}
     
     // Final LA Fat Mesh (Bright Amber Gold)
-    ctx.beginPath();
-    ctx.arc(laX + 10 * Math.cos(rotY), laY - 10, size * 0.52, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(250, 204, 21, 0.7)';
-    ctx.fill();
-    ctx.strokeStyle = '#facc15';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    if (meshState.laFat) {{
+      ctx.beginPath();
+      ctx.arc(laX + 10 * Math.cos(rotY), laY - 10, baseSize * 0.52, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(250, 204, 21, ${{meshState.opacity * 0.85}})`;
+      ctx.fill();
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }}
     
     // LV Chamber (Blue)
-    const lvX = Math.sin(rotY + 0.8) * size * 0.6;
-    const lvY = size * 0.35;
-    ctx.beginPath();
-    ctx.arc(lvX, lvY, size * 0.55, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
-    ctx.fill();
+    if (meshState.lv) {{
+      const lvX = Math.sin(rotY + 0.8) * baseSize * 0.6;
+      const lvY = baseSize * 0.35;
+      ctx.beginPath();
+      ctx.arc(lvX, lvY, baseSize * 0.55, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(59, 130, 246, ${{meshState.opacity * 0.55}})`;
+      ctx.fill();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.stroke();
+    }}
+    
+    // Aorta (Magenta)
+    if (meshState.ao) {{
+      const aoX = Math.sin(rotY - 0.5) * baseSize * 0.3;
+      const aoY = -baseSize * 0.75;
+      ctx.beginPath();
+      ctx.arc(aoX, aoY, baseSize * 0.30, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(217, 70, 239, ${{meshState.opacity * 0.6}})`;
+      ctx.fill();
+      ctx.strokeStyle = '#d946ef';
+      ctx.stroke();
+    }}
     
     ctx.restore();
   }}
@@ -1548,11 +1617,26 @@ function init3DStage() {{
   
   window.onmouseup = () => {{ isDragging = false; }};
   
+  canvas.onwheel = (e) => {{
+    e.preventDefault();
+    scale3D += e.deltaY * -0.001;
+    scale3D = Math.max(0.5, Math.min(2.0, scale3D));
+    draw3D();
+  }};
+  
   // Camera buttons
   document.getElementById('btn-cam-ant').onclick = () => {{ rotX = 0; rotY = 0; draw3D(); }};
   document.getElementById('btn-cam-post').onclick = () => {{ rotX = 0; rotY = Math.PI; draw3D(); }};
   document.getElementById('btn-cam-lat').onclick = () => {{ rotX = 0; rotY = Math.PI/2; draw3D(); }};
   document.getElementById('btn-cam-4ch').onclick = () => {{ rotX = 0.3; rotY = -0.6; draw3D(); }};
+  
+  // Layer toggles in 3D
+  document.getElementById('m3d-la-fat').onchange = (e) => {{ meshState.laFat = e.target.checked; draw3D(); }};
+  document.getElementById('m3d-peri').onchange = (e) => {{ meshState.peri = e.target.checked; draw3D(); }};
+  document.getElementById('m3d-la').onchange = (e) => {{ meshState.la = e.target.checked; draw3D(); }};
+  document.getElementById('m3d-lv').onchange = (e) => {{ meshState.lv = e.target.checked; draw3D(); }};
+  document.getElementById('m3d-ao').onchange = (e) => {{ meshState.ao = e.target.checked; draw3D(); }};
+  document.getElementById('m3d-opacity').oninput = (e) => {{ meshState.opacity = e.target.value / 100; draw3D(); }};
 }}
 
 // Curtain Slider logic
@@ -1627,9 +1711,21 @@ window.addEventListener('DOMContentLoaded', () => {{
     updatePatientView();
   }};
   
-  // Sliders
+  // Axial Slice Slider
   document.getElementById('slice-slider-a').oninput = (e) => {{
     currentAxialSlice = parseInt(e.target.value);
+    updatePatientView();
+  }};
+  
+  // Coronal Slider
+  document.getElementById('slider-coronal').oninput = (e) => {{
+    currentCoronalSlice = parseInt(e.target.value);
+    updatePatientView();
+  }};
+  
+  // Sagittal Slider
+  document.getElementById('slider-sagittal').oninput = (e) => {{
+    currentSagittalSlice = parseInt(e.target.value);
     updatePatientView();
   }};
   
@@ -1641,27 +1737,20 @@ window.addEventListener('DOMContentLoaded', () => {{
     updatePatientView();
   }};
   
-  // Switcher buttons
-  document.getElementById('switcher-prev').onclick = () => setVariant(currentVariantIndex - 1);
-  document.getElementById('switcher-next').onclick = () => setVariant(currentVariantIndex + 1);
-  
   // Keyboard navigation
   window.addEventListener('keydown', (e) => {{
     if (['input', 'select', 'textarea'].includes(e.target.tagName.toLowerCase())) return;
     
-    if (e.key === 'ArrowLeft') {{
-      setVariant(currentVariantIndex - 1);
-    }} else if (e.key === 'ArrowRight') {{
-      setVariant(currentVariantIndex + 1);
-    }} else if (e.key === 'j' || e.key === 'ArrowDown') {{
-      // Next patient
+    if (e.key === '1') setVariantById('B');
+    else if (e.key === '2') setVariantById('A');
+    else if (e.key === '3') setVariantById('C');
+    else if (e.key === 'j' || e.key === 'ArrowDown') {{
       const keys = Object.keys(cohortData);
       const currIdx = keys.indexOf(currentPatientId);
       currentPatientId = keys[(currIdx + 1) % keys.length];
       document.getElementById('patient-select').value = currentPatientId;
       updatePatientView();
     }} else if (e.key === 'k' || e.key === 'ArrowUp') {{
-      // Prev patient
       const keys = Object.keys(cohortData);
       const currIdx = keys.indexOf(currentPatientId);
       currentPatientId = keys[(currIdx - 1 + keys.length) % keys.length];
@@ -1672,9 +1761,10 @@ window.addEventListener('DOMContentLoaded', () => {{
   
   initCurtainSlider();
   
-  // Load initial variant from URL or default to 0
-  const initialVariant = getVariantFromUrl();
-  setVariant(initialVariant);
+  // Check URL param or default to Cohort Scorecard (B)
+  const urlParams = new URLSearchParams(window.location.search);
+  const initialTab = urlParams.get('tab') || 'B';
+  setVariantById(initialTab);
   updatePatientView();
 }});
 </script>
