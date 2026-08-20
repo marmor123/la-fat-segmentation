@@ -97,6 +97,8 @@ def fit_trimmed_gaussian_threshold(
     flags: list[QualityFlag] = []
     voxel_volume_ml = 0.0
     if voxel_spacing_mm is not None:
+        # TODO(Ticket 7): When migrating to production la_fat.thresholding, replace
+        # with la_fat.image_ops.voxel_volume_ml(voxel_spacing_mm) from Ticket 6.
         voxel_volume_ml = (voxel_spacing_mm[0] * voxel_spacing_mm[1] * voxel_spacing_mm[2]) / 1000.0
 
     # 1. Filter sub-0 HU candidates

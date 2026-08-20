@@ -139,6 +139,7 @@ def run_evaluation() -> None:
     for idx, (sc, ax) in enumerate(zip(scenarios, axes)):
         vox = sc["voxels"]
         spacing = sc["spacing"]
+        # TODO(Ticket 7): Replace inline formula with la_fat.image_ops.voxel_volume_ml
         voxel_vol_ml = (spacing[0] * spacing[1] * spacing[2]) / 1000.0
 
         res: ThresholdResult = fit_trimmed_gaussian_threshold(vox, config=config, voxel_spacing_mm=spacing)
