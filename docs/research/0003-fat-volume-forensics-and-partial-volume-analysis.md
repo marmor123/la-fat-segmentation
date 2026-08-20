@@ -70,3 +70,18 @@ In CT imaging, because slice thickness is $1.5\text{ mm}$, a voxel sitting on th
 1. **Threshold Clamping Policy (Ticket 7):** The adaptive Gaussian upper tail $[\mu - 2\sigma, \mu + 2\sigma]$ is clamped at **`0.0 HU`** (the physical fat/soft-tissue boundary), rather than $-30.0\text{ HU}$.
 2. **Zero Morphological Subtraction:** Myocardial boundaries are respected via TotalSegmentator multi-label masks and distance competition, with zero artificial dilation/subtraction buffers.
 3. **Dual-Window Reporting:** The pipeline reports both `la_fat_volume_adaptive_ml` (full Gaussian $\le 0\text{ HU}$) and `la_fat_volume_conservative_ml` (standard $[-190, -30]\text{ HU}$) for complete scientific transparency.
+
+---
+
+## 6. Resolution & Radiomics Implications (IBSI Compliance & High-Res Strategy)
+
+### 6.1 TotalSegmentator Heart Model Training Grid
+- TotalSegmentator v2's `heartchambers_highres` model (Task 298: LA, LV, RA, RV, Aorta, PA, Myocardium) was trained on **high-resolution $0.8\text{ mm}$ isotropic CT**, whereas `total` (117 classes) and `trunk_cavities` were trained on $1.5\text{ mm}$.
+- *Forensic Note:* Intermediate masks in the legacy cache (`la_eat_segmentation/data/intermediate`) were generated from downsampled $1.5\text{ mm}$ scans. For the definitive 10-patient cohort benchmark (Ticket 9), TS v2 will run directly on the raw native $512 \times 512$ scans to maximize wall sharpness.
+
+### 6.2 Why Radiomics Demands Native Resolution
+- **Macro-Volume vs. Micro-Texture:** While macro-volume is preserved within $<3\%$ across grids, in-plane downsampling from $0.35\text{ mm} \to 1.5\text{ mm}$ averages 16 voxels into 1, acting as a strong spatial low-pass filter that destroys high-order texture (GLCM, GLRLM, GLSZM, Wavelets).
+- **IBSI Compliance:** To ensure publication-grade radiomics, the pipeline outputs `la_fat_final.nii.gz` on the **exact native CT matrix ($512 \times 512 \times N$) and affine**, allowing direct, unblurred feature extraction via `PyRadiomics`.
+- **Dual-Mode Pipeline Architecture:**
+  - *Fast QA Mode ($1.5\text{ mm}$):* ~2 sec/scan for instant slice gallery and quality flag screening.
+  - *Native Radiomics Mode ($0.35\text{ mm}$):* High-fidelity voxel-for-voxel mask generation for radiomics feature extraction.
