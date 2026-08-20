@@ -26,7 +26,7 @@ A scientifically validated, production-grade, deep-module Left Atrial Epicardial
 - [Ticket 2: [Grilling] Ingestion & Structure of the 10 Real Scans](https://github.com/marmor123/la-fat-segmentation/issues/32) — Standardized 4-digit canonical patient IDs, external NIfTI/mask cache storage with repo manifest, Flash CT acquisition specs, and physiological vs scanner reference sanity bounds.
 - [Ticket 3: [Prototype] Trimmed-Gaussian Peak Fitting Logic Demo](https://github.com/marmor123/la-fat-segmentation/issues/33) — Verified prominence-based mode detection, asymmetric tail trimming, multi-tiered quality flags, and safe fallback across 7 synthetic and clinical CT scenarios.
 - [Ticket 4: [Prototype] Surface Distance Partition on Synthetic Phantom](https://github.com/marmor123/la-fat-segmentation/issues/34) — Validated 3D multi-anchor solid EDT across non-convex AV groove saddle concavities and thin septal boundaries with 100% primary component purity, 0 septal bleed, and 35mm distance clamping.
-- [Ticket 5: [Prototype] Lightweight Zero-Footprint QA Slice Viewer UI](https://github.com/marmor123/la-fat-segmentation/issues/35) — Validated zero-dependency offline HTML5/WebP multi-planar viewer combining cohort triage scorecard, 6-channel layer toggles, split-screen curtain wipe, and 3D colleague presentation studio.
+- [Ticket 5: [Prototype] Lightweight Zero-Footprint QA Slice Viewer UI](https://github.com/marmor123/la-fat-segmentation/issues/35) — Validated zero-dependency offline HTML5/Canvas/WebP multi-tab dashboard combining Cohort Scorecard triage, Multi-Planar PACS (with synchronized orthogonal scrubbers, 6-channel layer toggles, and curtain wipe), and clean 3D Mesh Studio.
 
 ## Not yet specified
 
