@@ -555,7 +555,7 @@ table.cohort-table tr:hover:not(.active-patient) {
    ========================================================================= */
 #variant-c {
   display: none;
-  grid-template-columns: 280px 1fr 340px;
+  grid-template-columns: 300px 1fr;
   gap: 12px;
   height: 100%;
 }
@@ -979,41 +979,6 @@ table.cohort-table tr:hover:not(.active-patient) {
       <div style="position:absolute; bottom:14px; left:50%; transform:translateX(-50%); font-size:11px; color:#cbd5e1; background:rgba(0,0,0,0.6); padding:4px 10px; border-radius:20px; backdrop-filter:blur(6px);">
         🖱️ Click & Drag to Orbit 3D Heart Mesh | Mouse Wheel to Zoom
       </div>
-    </div>
-    
-    <!-- Right Colleague Presentation Sidebar -->
-    <div class="presentation-sidebar">
-      <div class="panel-header" style="background:transparent; padding:0; border:none;">
-        <span>Presentation Highlights</span>
-      </div>
-      
-      <div class="slide-deck-card">
-        <div class="slide-deck-title">1. Multi-Anchor Euclidean Partition</div>
-        <div class="slide-deck-body">
-          Replaced fragile heuristic cutting planes with 3D multi-anchor distance transforms.
-          Achieved <strong>0% septal bleed</strong> and 100% primary connected component purity across the AV groove.
-        </div>
-      </div>
-      
-      <div class="slide-deck-card" style="border-left-color:var(--accent-purple);">
-        <div class="slide-deck-title">2. Partial Volume Fat Recovery</div>
-        <div class="slide-deck-body">
-          Adaptive Gaussian thresholding clamped at 0.0 HU recovers the thin 1–2 voxel epicardial fat boundary layer,
-          yielding <strong>+23.7% biometric volume</strong> compared to the historical -30 HU clip.
-        </div>
-      </div>
-      
-      <div class="slide-deck-card" style="border-left-color:var(--accent-green);">
-        <div class="slide-deck-title">3. Zero-Footprint Radiomics Export</div>
-        <div class="slide-deck-body">
-          Dual-grid architecture outputs both 1.5mm isotropic screening masks and native 0.35mm CT masks
-          fully compliant with IBSI standardization for PyRadiomics texture analysis.
-        </div>
-      </div>
-      
-      <button class="btn btn-primary" style="margin-top:auto;" id="btn-download-slide">
-        <span>📑</span> Export Clinical Summary Report
-      </button>
     </div>
   </div>
 
