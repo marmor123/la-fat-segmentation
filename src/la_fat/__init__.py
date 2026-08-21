@@ -19,7 +19,14 @@ from la_fat.pipeline_result import (
     load_pipeline_result,
     save_pipeline_result,
 )
-from la_fat.preprocessor import ResampleResult, resample_to_isotropic
+from la_fat.image_ops import (
+    GridGeometry,
+    ResampleResult,
+    apply_grid_geometry,
+    get_grid_geometry,
+    resample_to_isotropic,
+    resample_to_reference,
+)
 from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
 from la_fat.quality_flagger import QualityFlag, generate_quality_flags
 from la_fat.ts_runner import (
@@ -32,6 +39,7 @@ from la_fat.ts_runner import (
 __all__ = [
     "CleanupResult",
     "DashboardOutput",
+    "GridGeometry",
     "PatientSummary",
     "PipelineArtifacts",
     "PipelineConfig",
@@ -43,6 +51,7 @@ __all__ = [
     "SurfaceSpec",
     "TsPrecomputeResult",
     "ViewportPreset",
+    "apply_grid_geometry",
     "cleanup_la_fat_mask",
     "create_dashboard",
     "discover_patients",
@@ -50,10 +59,12 @@ __all__ = [
     "extract_meshes_for_step",
     "generate_dashboard",
     "generate_quality_flags",
+    "get_grid_geometry",
     "is_ts_available",
     "load_pipeline_result",
     "partition_fat",
     "resample_to_isotropic",
+    "resample_to_reference",
     "resolve_ts_mask_path",
     "run_fat_extraction_pipeline",
     "run_ts_precompute",

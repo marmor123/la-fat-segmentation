@@ -18,8 +18,11 @@ import pathlib
 import numpy as np
 import SimpleITK as sitk
 
+from la_fat.image_ops import GridGeometry
+
 __all__ = [
     "load_nifti",
+    "load_nifti_with_geometry",
     "save_nifti",
 ]
 
@@ -32,9 +35,10 @@ __all__ = [
 def save_nifti(
     mask: np.ndarray,
     path: str | pathlib.Path,
-    spacing: tuple[float, float, float],
+    spacing: tuple[float, float, float] | None = None,
     origin: tuple[float, float, float] | None = None,
     direction: np.ndarray | None = None,
+    geometry: GridGeometry | None = None,
 ) -> None:
     """Save a numpy array as a NIfTI file with full spatial metadata.
 
@@ -46,26 +50,32 @@ def save_nifti(
         Output path (``.nii.gz`` or ``.nii``).  Parent directories are
         created automatically.
     spacing:
-        Voxel spacing ``(sx, sy, sz)`` in mm.  **This is the correct
-        axis order** — no reordering is performed, unlike the old
-        ``mesh_extractor._save_nifti`` which swapped ``x`` and ``z``.
+        Voxel spacing ``(sx, sy, sz)`` in mm.
     origin:
         World-coordinate origin ``(ox, oy, oz)``.  Defaults to
         ``(0.0, 0.0, 0.0)``.
     direction:
         3×3 direction cosine matrix.  Defaults to identity.
+    geometry:
+        Optional GridGeometry instance. If provided, spacing, origin,
+        and direction are extracted from it.
     """
-    img = sitk.GetImageFromArray(mask)
+    if geometry is not None:
+        spacing = geometry.spacing
+        origin = geometry.origin
+        direction = geometry.direction
 
+    if spacing is None:
+        spacing = (1.0, 1.0, 1.0)
+
+    img = sitk.GetImageFromArray(mask)
     img.SetSpacing(spacing)
 
     if origin is not None:
         img.SetOrigin(origin)
-    # else: SimpleITK default is (0, 0, 0), which is what we want.
 
     if direction is not None:
         img.SetDirection(direction.ravel().tolist())
-    # else: SimpleITK default is identity.
 
     path_str = str(path)
     os.makedirs(os.path.dirname(path_str), exist_ok=True)
@@ -92,20 +102,28 @@ def load_nifti(path: str | pathlib.Path) -> tuple[np.ndarray, np.ndarray]:
     FileNotFoundError
         If the file does not exist.
     """
+    array, geometry = load_nifti_with_geometry(path)
+    return (array, geometry.to_affine())
+
+
+def load_nifti_with_geometry(path: str | pathlib.Path) -> tuple[np.ndarray, GridGeometry]:
+    """Load a NIfTI file, returning the array and its typed GridGeometry.
+
+    Parameters
+    ----------
+    path:
+        Path to the NIfTI file to load.
+
+    Returns
+    -------
+    tuple[np.ndarray, GridGeometry]
+        ``(array, geometry)``
+    """
     path_str = str(path)
     if not os.path.isfile(path_str):
         raise FileNotFoundError(f"NIfTI file not found: {path_str}")
 
     img = sitk.ReadImage(path_str)
     array: np.ndarray = sitk.GetArrayFromImage(img)
-
-    spacing = img.GetSpacing()
-    origin = img.GetOrigin()
-    direction = np.array(img.GetDirection()).reshape(3, 3)
-
-    # Build the 4×4 affine: [R @ diag(s) | t; 0 0 0 1]
-    affine = np.eye(4)
-    affine[:3, :3] = direction @ np.diag(spacing)
-    affine[:3, 3] = origin
-
-    return (array, affine)
+    geometry = GridGeometry.from_sitk_image(img)
+    return (array, geometry)

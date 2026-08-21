@@ -23,7 +23,7 @@ from la_fat.mesh_extractor import extract_interactive_meshes
 from la_fat.pipeline_types import PipelineArtifacts
 from la_fat.partition_engine import PartitionResult, partition_fat
 from la_fat.pericardium_resolver import PericardiumResult, resolve_pericardium
-from la_fat.preprocessor import ResampleResult, resample_to_isotropic
+from la_fat.image_ops import ResampleResult, resample_to_isotropic
 from la_fat.qa_dashboard import DashboardOutput, generate_dashboard
 from la_fat.pipeline_result import PipelineResultData, save_pipeline_result
 from la_fat.quality_flagger import QualityFlag, generate_quality_flags
