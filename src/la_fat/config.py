@@ -13,19 +13,25 @@ import typing as t
 import yaml
 
 # Type map for validation: field_name -> expected type
-_FIELD_TYPES: dict[str, type] = {
-    "spacing_mm": float,
-    "fat_hu_low": float,
-    "fat_hu_high": float,
-    "min_pericardium_volume_ml": float,
-    "pericardium_dilation_mm": float,
-    "min_anchor_volume_ml": float,
-    "min_fat_island_volume_mm3": float,
-    "la_fat_volume_low_ml": float,
-    "la_fat_volume_high_ml": float,
-    "max_unassigned_fat_pct": float,
-    "max_lv_la_ratio": float,
-    "min_fat_fraction_pct": float,
+_FIELD_TYPES: dict[str, t.Any] = {
+    "spacing_mm": (float, int),
+    "fat_hu_low": (float, int),
+    "fat_hu_high": (float, int),
+    "fat_clamping_max_hu": (float, int),
+    "fat_sigma_multiplier": (float, int),
+    "fat_smoothing_sigma_hu": (float, int),
+    "min_fat_voxels": int,
+    "fat_peak_prominence_ratio": (float, int),
+    "fat_wide_sigma_warn_hu": (float, int),
+    "min_pericardium_volume_ml": (float, int),
+    "pericardium_dilation_mm": (float, int),
+    "min_anchor_volume_ml": (float, int),
+    "min_fat_island_volume_mm3": (float, int),
+    "la_fat_volume_low_ml": (float, int),
+    "la_fat_volume_high_ml": (float, int),
+    "max_unassigned_fat_pct": (float, int),
+    "max_lv_la_ratio": (float, int),
+    "min_fat_fraction_pct": (float, int),
     "data_dir": str,
     "output_dir": str,
     "intermediate_subdir": str,
@@ -48,6 +54,12 @@ class PipelineConfig:
     # --- HU / fat-threshold --------------------------------------------------
     fat_hu_low: float = -190.0
     fat_hu_high: float = -30.0
+    fat_clamping_max_hu: float = 0.0
+    fat_sigma_multiplier: float = 2.0
+    fat_smoothing_sigma_hu: float = 2.5
+    min_fat_voxels: int = 500
+    fat_peak_prominence_ratio: float = 0.003
+    fat_wide_sigma_warn_hu: float = 25.0
 
     # --- Pericardium ---------------------------------------------------------
     min_pericardium_volume_ml: float = 50.0
@@ -116,8 +128,13 @@ class PipelineConfig:
                 value = raw[field.name]
                 expected = _FIELD_TYPES.get(field.name)
                 if expected is not None and not isinstance(value, expected):
+                    exp_name = (
+                        expected.__name__
+                        if hasattr(expected, "__name__")
+                        else str(expected)
+                    )
                     raise TypeError(
-                        f"Field '{field.name}' expected type {expected.__name__}, "
+                        f"Field '{field.name}' expected type {exp_name}, "
                         f"got {type(value).__name__} (value: {value!r})"
                     )
                 kwargs[field.name] = value

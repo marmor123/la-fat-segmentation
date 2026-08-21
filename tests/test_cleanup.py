@@ -437,3 +437,44 @@ class TestVesselFilling:
     def test_filling_flag_default_false(self, mask_with_hole):
         result = cleanup_la_fat_mask(mask_with_hole, CFG, SPACING)
         assert result.vessel_filling_applied is False
+
+
+# ===================================================================
+# 11. GridGeometry and CleanupConfig Integration
+# ===================================================================
+
+
+class TestGridGeometryAndCleanupConfig:
+    """Test cleanup_la_fat_mask with GridGeometry and typed CleanupConfig."""
+
+    def test_cleanup_with_gridgeometry(self):
+        from la_fat.image_ops import GridGeometry
+
+        geo = GridGeometry(
+            spacing=(1.5, 1.5, 1.5),
+            origin=(0.0, 0.0, 0.0),
+            direction=np.eye(3),
+            shape_zyx=SHAPE,
+        )
+        large = _make_sphere(SHAPE, (16, 16, 16), 10)
+        small = _make_sphere(SHAPE, (4, 4, 4), 1)  # tiny island
+        mask = large | small
+
+        from la_fat.cleanup import CleanupConfig
+
+        cfg = CleanupConfig(min_fat_island_volume_mm3=50.0)
+        result = cleanup_la_fat_mask(mask, config=cfg, geometry=geo)
+
+        assert result.islands_removed == 1
+        assert np.array_equal(result.cleaned_mask, large.astype(np.uint8))
+        assert result.total_removed_volume_ml == pytest.approx(
+            result.total_removed_volume_mm3 / 1000.0
+        )
+
+    def test_cleanupconfig_from_pipeline_config(self):
+        from la_fat.cleanup import CleanupConfig
+
+        pipeline_cfg = PipelineConfig(min_fat_island_volume_mm3=75.0)
+        cfg = CleanupConfig.from_pipeline_config(pipeline_cfg)
+        assert cfg.min_fat_island_volume_mm3 == 75.0
+

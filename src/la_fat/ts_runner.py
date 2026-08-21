@@ -243,6 +243,9 @@ def _run_ts_api(
     _ts_func(**merged)  # type: ignore[arg-type]
 
 
+_run_totalsegmentator = _run_ts_api
+
+
 def _run_ts_cli(
     ct_path: str,
     output_dir: str,
@@ -425,7 +428,7 @@ def run_ts_precompute(
         )
         try:
             if _use_api:
-                _run_ts_api(ct_path, run_raw_dir, **run_kwargs)
+                _run_totalsegmentator(ct_path, run_raw_dir, **run_kwargs)
             else:
                 _run_ts_cli(
                     ct_path,
