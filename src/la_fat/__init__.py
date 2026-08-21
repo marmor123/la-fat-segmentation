@@ -11,7 +11,12 @@ from la_fat.mesh_extractor import (
     extract_interactive_meshes,
     extract_meshes_for_step,
 )
-from la_fat.partition_engine import PartitionResult, partition_fat
+from la_fat.partition_engine import (
+    PartitionConfig,
+    PartitionMetrics,
+    PartitionResult,
+    partition_fat,
+)
 from la_fat.pipeline import PipelineResult, run_fat_extraction_pipeline
 from la_fat.pipeline_types import (
     PipelineArtifacts,
@@ -59,6 +64,8 @@ __all__ = [
     "PipelineConfig",
     "PipelineResult",
     "PipelineResultData",
+    "PartitionConfig",
+    "PartitionMetrics",
     "PartitionResult",
     "QualityFlag",
     "QualitySeverity",
