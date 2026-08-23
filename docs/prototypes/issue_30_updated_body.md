@@ -21,26 +21,24 @@ A scientifically validated, production-grade, deep-module Left Atrial Epicardial
 - [Thresholding Strategy] — Robust peak-centered trimmed Gaussian fit with fallback to standard clinical window [-190, -30] HU.
 - [Pericardial Geometry] — TotalSegmentator v2 solid 3D pericardial cavity is the primary envelope; fallback uses chamber-bounded exclusion.
 - [Partition Principle] — Multi-anchor 3D Euclidean surface distance transform across 6 canonical chambers.
-- [Eliminated Artifacts] — Discard heavy Marching Cubes .ply pre-computation and Panel/PyVista dashboard.
 - [Ticket 1: [Research] Clinical Non-Contrast HU Windows & TS v2 Label Contracts](https://github.com/marmor123/la-fat-segmentation/issues/31) — Validated [-190, -30] HU clinical baseline, Gaussian fit boundaries, and TS v2 heartchambers_highres (7 classes) / trunk_cavities (pericardium ID 3) contract.
 - [Ticket 2: [Grilling] Ingestion & Structure of the 10 Real Scans](https://github.com/marmor123/la-fat-segmentation/issues/32) — Standardized 4-digit canonical patient IDs, external NIfTI/mask cache storage with repo manifest, Flash CT acquisition specs, and physiological vs scanner reference sanity bounds.
 - [Ticket 3: [Prototype] Trimmed-Gaussian Peak Fitting Logic Demo](https://github.com/marmor123/la-fat-segmentation/issues/33) — Verified prominence-based mode detection, asymmetric tail trimming, multi-tiered quality flags, and safe fallback across 7 synthetic and clinical CT scenarios.
 - [Ticket 4: [Prototype] Surface Distance Partition on Synthetic Phantom](https://github.com/marmor123/la-fat-segmentation/issues/34) — Validated 3D multi-anchor solid EDT across non-convex AV groove saddle concavities and thin septal boundaries with 100% primary component purity, 0 septal bleed, and 35mm distance clamping.
 - [Ticket 5: [Prototype] Lightweight Zero-Footprint QA Slice Viewer UI](https://github.com/marmor123/la-fat-segmentation/issues/35) — Validated zero-dependency offline HTML5/Canvas/WebP multi-tab dashboard combining Cohort Scorecard triage, Multi-Planar PACS (with synchronized orthogonal scrubbers, 6-channel layer toggles, and curtain wipe), and clean 3D Mesh Studio.
 - [Ticket 6: [Task] Deep Resampling & Grid Geometry Seam (image_ops)](https://github.com/marmor123/la-fat-segmentation/issues/36) — Implemented deep `image_ops` module with `GridGeometry`, `ResampleResult`, strict -1000 HU air padding, reference-locked native grid resampling, and removed legacy preprocessor.
-- [Ticket 7: [Task] Adaptive Trimmed-Gaussian Fat Thresholding Engine](https://github.com/marmor123/la-fat-segmentation/issues/37) — Implemented deep `thresholding` engine with 3-parameter Gaussian curve fitting, non-contrast CT fat peak detection, 0.0 HU upper clamp, and dual-window quantification.
-- [Ticket 8: [Task] 3D Multi-Anchor Solid EDT Partition Engine](https://github.com/marmor123/la-fat-segmentation/issues/38) — Implemented deep `partition_engine` module with multi-anchor 3D Euclidean distance transform, non-convex AV groove saddle partitioning, 35mm distance cutoffs, and connected-component purity safeguards.
-- [Ticket 9: [Task] Rebuild Pipeline Orchestrator & Batch Processing](https://github.com/marmor123/la-fat-segmentation/issues/39) — Consolidated the entire segmentation workflow into a deep pure function `run_fat_extraction` returning an immutable `SegmentationResult`, integrated dual-grid radiomics NIfTI export (1.5mm screening + native 512x512 with raw CT headers), unified cohort batch execution (`run_cohort_pipeline`), generated standalone single-patient (`qa_report.html`) and multi-patient (`cohort_qa_dashboard.html`) HTML5 QA Studio artifacts, pruned legacy procedural dashboards and mesh extractors, and achieved 100% test suite passing (371 tests).
+- [Ticket 7: [Task] Deep Thresholder & Adaptive Morphology Implementation](https://github.com/marmor123/la-fat-segmentation/issues/37) — Implemented production `la_fat.thresholding` and `la_fat.cleanup` with trimmed Gaussian fitting, 0.0 HU upper clamping, dual-window volume quantification, and deep `GridGeometry` support.
+- [Ticket 8: [Task] Deep Multi-Anchor Partition Engine Implementation](https://github.com/marmor123/la-fat-segmentation/issues/38) — Implemented production Multi-Anchor Solid EDT engine with 35mm distance clamping, GridGeometry coordinate integration, 26-connectivity topological auditing, and typed QualityFlag emission.
+- [Ticket 9: [Task] 10 Real Scans Benchmark & QA Generation](https://github.com/marmor123/la-fat-segmentation/issues/39) — Executed full 10-patient real clinical scan benchmark achieving Pearson r = 0.9526 (p = 2.08e-5) vs scanner workstation ground truth, exported native radiomics masks (`la_fat_final_native.nii.gz`), and built the 3-variant production QA Studio (`cohort_qa_viewer.html`) featuring interactive high-resolution anti-aliased 3D WebGL anatomical mesh rendering across all 8 cardiac structures.
+- [Ticket 10: [Grilling] Clinical Audit of Real Scan Results](https://github.com/marmor123/la-fat-segmentation/issues/40) — Clinically audited the 10-patient benchmark results, validating the 6-chamber distance partition boundary grounding against scanner software volume deltas, locking dual native radiomics export (`la_fat_final_native.nii.gz` & `la_fat_conservative_native.nii.gz`), and calibrating quality concern bounds for production.
+- [Ticket 12: [Research] Native-Grid Density Modeling & Bayesian Prior Thresholding](https://github.com/marmor123/la-fat-segmentation/issues/42) — Evaluated native $512 \times 512$ density modeling across all 10 scans; 2-component GMM with Bayes decision boundary ($P \ge 0.5$) achieved $r = 0.9599$ ($p = 1.08 \times 10^{-5}$) with 0 fallbacks, and Bayesian MAP prior regularization achieved $\text{MAE} = 2.52\text{ mL}$.
 
 ## Not yet specified
 
 - Automated PyRadiomics feature extraction module (IBSI-standardized GLCM, GLRLM, GLSZM, Wavelet textures at native CT resolution).
 - Distal pulmonary vein sleeve ostial boundary refinement heuristics.
-- TotalSegmentator v2 native-grid re-inference on raw 512x512 CT scans (for Ticket 9 benchmark cohort).
 - Long-term Option C: Training a direct 3D nnU-Net on the verified cohort.
 
 ## Out of scope
 
 - Contrast-enhanced CTA blood pool handling (deferred to future phase).
-- Marching Cubes 3D `.ply` mesh disk generation for dashboarding.
-
