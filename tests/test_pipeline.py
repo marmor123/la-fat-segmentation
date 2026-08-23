@@ -18,7 +18,12 @@ import numpy as np
 import pytest
 
 from la_fat.config import PipelineConfig
-from la_fat.pipeline import PipelineResult, run_fat_extraction_pipeline
+from la_fat.pipeline import (
+    PipelineResult,
+    SegmentationResult,
+    run_fat_extraction,
+    run_fat_extraction_pipeline,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -267,10 +272,9 @@ class TestPipelineEndToEnd:
         assert os.path.isfile(os.path.join(patient_out, "la_fat_mask.nii.gz"))
         assert os.path.isfile(os.path.join(patient_out, "quality_flags.json"))
 
-        # Dashboard files should exist
-        if result.dashboard_output is not None:
-            assert os.path.isfile(result.dashboard_output.slice_gallery_path)
-            assert os.path.isfile(result.dashboard_output.summary_table_path)
+        # QA Studio HTML report should exist
+        if result.qa_report_path is not None:
+            assert os.path.isfile(result.qa_report_path)
 
         # Verify quality flags JSON is valid
         with open(os.path.join(patient_out, "quality_flags.json")) as f:
@@ -507,29 +511,12 @@ class TestPipelineErrorHandling:
         assert not result.success
 
 
-class TestMeshExtraction:
-    """Tests for the mesh extraction pipeline step."""
+class TestQAStudioAndDualGridExport:
+    """Tests for QA Studio HTML generation and dual-grid radiomics export."""
 
-    def test_mesh_paths_in_result(self):
-        """Verify PipelineResult has mesh_paths field with default None."""
-        result = PipelineResult(
-            patient_id="test",
-            success=True,
-            partition_result=None,
-            pericardium_result=None,
-            cleanup_result=None,
-            quality_flags=[],
-            dashboard_output=None,
-            errors=[],
-            warnings=[],
-            total_runtime_seconds=0.0,
-        )
-        assert hasattr(result, "mesh_paths")
-        assert result.mesh_paths is None
-
-    def test_mesh_extraction_step_creates_mesh_dirs(self, tmp_path):
-        """Running the full pipeline creates mesh directories with .ply files."""
-        patient_id = "MESHTEST"
+    def test_dual_grid_masks_saved(self, tmp_path):
+        """Pipeline exports both 1.5mm isotropic and native grid masks."""
+        patient_id = "DUALGRID"
         data_dir = str(tmp_path / "data")
         output_dir = str(tmp_path / "outputs")
         config = _make_config(data_dir, output_dir)
@@ -538,32 +525,17 @@ class TestMeshExtraction:
         result = run_fat_extraction_pipeline(patient_id, config=config)
 
         assert result.success, f"Pipeline failed: {result.errors}"
-        assert result.mesh_paths is not None
+        patient_out = os.path.join(output_dir, patient_id)
 
-        meshes_root = os.path.join(output_dir, patient_id, "meshes")
-        assert os.path.isdir(os.path.join(meshes_root, "step2_anchors"))
-        assert os.path.isdir(os.path.join(meshes_root, "step5_partition"))
-        assert os.path.isdir(os.path.join(meshes_root, "step7_final"))
+        # 1.5mm mask
+        assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_1.5mm.nii.gz"))
+        assert os.path.isfile(os.path.join(patient_out, "la_fat_mask.nii.gz"))
+        # Native grid mask
+        assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_native.nii.gz"))
 
-        # Verify .ply files exist in each subdirectory
-        step2_plys = glob.glob(os.path.join(meshes_root, "step2_anchors", "*.ply"))
-        assert len(step2_plys) > 0
-        step5_plys = glob.glob(os.path.join(meshes_root, "step5_partition", "*.ply"))
-        assert len(step5_plys) > 0
-        step7_plys = glob.glob(os.path.join(meshes_root, "step7_final", "*.ply"))
-        assert len(step7_plys) > 0
-
-    def test_pipeline_succeeds_when_mesh_extraction_fails(self, tmp_path, monkeypatch):
-        """Pipeline continues gracefully if mesh extraction raises an exception."""
-        def failing_extract(*args, **kwargs):
-            raise RuntimeError("Simulated mesh extraction failure")
-
-        monkeypatch.setattr(
-            "la_fat.pipeline.extract_interactive_meshes",
-            failing_extract,
-        )
-
-        patient_id = "FAILMESH"
+    def test_qa_studio_html_generated(self, tmp_path):
+        """Pipeline generates standalone zero-dependency HTML5 QA Studio report."""
+        patient_id = "QASTUDIO"
         data_dir = str(tmp_path / "data")
         output_dir = str(tmp_path / "outputs")
         config = _make_config(data_dir, output_dir)
@@ -571,17 +543,28 @@ class TestMeshExtraction:
         _create_full_synthetic_dataset(data_dir, patient_id)
         result = run_fat_extraction_pipeline(patient_id, config=config)
 
-        # Pipeline did NOT crash — returns PipelineResult
-        assert isinstance(result, PipelineResult)
-        # mesh_paths is None since extraction failed
-        assert result.mesh_paths is None
-        # The mesh extraction error is recorded
-        mesh_errors = [e for e in result.errors if "Mesh extraction" in e]
-        assert len(mesh_errors) > 0
-        # Pipeline continued to later steps (dashboard, flag saving)
-        assert result.dashboard_output is not None
-        # success=False because errors list is non-empty
-        assert not result.success
+        assert result.success, f"Pipeline failed: {result.errors}"
+        assert result.qa_report_path is not None
+        assert os.path.isfile(result.qa_report_path)
+
+        with open(result.qa_report_path, "r", encoding="utf-8") as fh:
+            content = fh.read()
+            assert "Cohort Scorecard" in content or "Multi-Planar" in content
+            assert patient_id in content
+
+    def test_pipeline_succeeds_when_qa_skipped(self, tmp_path):
+        """Pipeline succeeds cleanly when generate_qa=False."""
+        patient_id = "NOQA"
+        data_dir = str(tmp_path / "data")
+        output_dir = str(tmp_path / "outputs")
+        config = _make_config(data_dir, output_dir)
+
+        _create_full_synthetic_dataset(data_dir, patient_id)
+        result = run_fat_extraction(patient_id, config=config, generate_qa=False)
+
+        assert result.success
+        assert result.qa_report_path is None
+
 
 
 class TestPipelineCLI:

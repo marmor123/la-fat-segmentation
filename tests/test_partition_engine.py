@@ -24,7 +24,7 @@ from la_fat.partition_engine import (
     PartitionResult,
     partition_fat,
 )
-from la_fat.pipeline_types import QualityFlag, QualitySeverity
+from la_fat.quality_flagger import QualityFlag, QualitySeverity
 
 # ---------------------------------------------------------------------------
 # Shared test constants

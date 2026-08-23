@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from la_fat.image_ops import GridGeometry
-from la_fat.pipeline_types import QualitySeverity
+from la_fat.quality_flagger import QualitySeverity
 from la_fat.thresholding import (
     ThresholdConfig,
     ThresholdResult,

@@ -33,7 +33,7 @@ from scipy.ndimage import distance_transform_edt, label
 from la_fat.anatomy import CANONICAL_ANCHORS, voxel_volume_ml
 from la_fat.config import PipelineConfig
 from la_fat.image_ops import GridGeometry
-from la_fat.pipeline_types import QualityFlag, QualitySeverity
+from la_fat.quality_flagger import QualityFlag, QualitySeverity
 
 # 26-connectivity structuring element for 3D topological analysis
 _CONNECTIVITY_26 = np.ones((3, 3, 3), dtype=bool)

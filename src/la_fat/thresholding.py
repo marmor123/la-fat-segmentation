@@ -21,7 +21,7 @@ import scipy.optimize
 import scipy.signal
 
 from la_fat.image_ops import GridGeometry
-from la_fat.pipeline_types import QualityFlag, QualitySeverity
+from la_fat.quality_flagger import QualityFlag, QualitySeverity
 
 
 @dataclass(frozen=True)

@@ -57,12 +57,9 @@ case "${MODE}" in
             --output-dir "${OUTPUT_DIR}"
         ;;
     dashboard)
-        echo "[entrypoint] Starting dashboard server on port 5006"
+        echo "[entrypoint] Serving QA Studio dashboard on port 5006"
         echo "[entrypoint] Output directory: ${OUTPUT_DIR}"
-        exec python -m la_fat.interactive_dashboard \
-            --output-dir "${OUTPUT_DIR}" \
-            --port 5006 \
-            --address 0.0.0.0
+        exec python -m http.server 5006 --directory "${OUTPUT_DIR}" --bind 0.0.0.0
         ;;
     *)
         echo "[entrypoint] ERROR: Unknown mode '${MODE}'. Valid modes: pipeline, dashboard" >&2
