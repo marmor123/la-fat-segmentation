@@ -266,7 +266,10 @@ def fit_trimmed_gaussian(
     )
 
     # 4. Topographical peak detection
-    prominence_thresh = max(float(n_voxels) * config.peak_prominence_ratio, 10.0)
+    prominence_thresh = max(
+        min(float(n_voxels) * config.peak_prominence_ratio, float(smoothed.max()) * 0.05),
+        5.0,
+    )
     peaks, props = scipy.signal.find_peaks(smoothed, prominence=prominence_thresh)
 
     # Filter peaks in plausible fat region

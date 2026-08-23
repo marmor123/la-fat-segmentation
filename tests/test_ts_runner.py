@@ -306,7 +306,7 @@ class TestRunTsPrecompute:
         """Mock _run_totalsegmentator to create all 8 TS masks."""
         from la_fat import ts_runner as _tr
 
-        def _fake_run(ct_path_arg: str, output_dir: str) -> None:
+        def _fake_run(ct_path_arg: str, output_dir: str, **kwargs: object) -> None:
             _make_fake_ts_output(output_dir, structure_names=_tr.TS_STRUCTURE_NAMES)
 
         monkeypatch.setattr("la_fat.ts_runner._run_totalsegmentator", _fake_run)
@@ -392,7 +392,7 @@ class TestRunTsPrecompute:
     ):
         """Only create 2 masks, expect the other 6 in errors."""
 
-        def _fake_partial(ct_path_arg: str, output_dir: str) -> None:
+        def _fake_partial(ct_path_arg: str, output_dir: str, **kwargs: object) -> None:
             subset = {"LA": "heart_atrium_left", "LV": "heart_ventricle_left"}
             _make_fake_ts_output(output_dir, structure_names=subset)
 
@@ -409,23 +409,24 @@ class TestRunTsPrecompute:
         assert "Pericardium" in result.errors
 
     def test_ts_failure_propagates(self, ct_path, tmp_path, monkeypatch):
-        """When _run_totalsegmentator raises, the exception bubbles up."""
+        """When _run_totalsegmentator raises, all structures are recorded in errors."""
 
-        def _fake_crash(ct_path_arg: str, output_dir: str) -> None:
+        def _fake_crash(ct_path_arg: str, output_dir: str, **kwargs: object) -> None:
             raise RuntimeError("TS crashed")
 
         monkeypatch.setattr("la_fat.ts_runner._run_totalsegmentator", _fake_crash)
 
         config = PipelineConfig()
-        with pytest.raises(RuntimeError, match="TS crashed"):
-            run_ts_precompute(ct_path, str(tmp_path), config)
+        result = run_ts_precompute(ct_path, str(tmp_path), config)
+        assert len(result.masks_saved) == 0
+        assert len(result.errors) == 8
 
     def test_corrupted_mask_does_not_crash_pipeline(
         self, ct_path, tmp_path, monkeypatch
     ):
         """A corrupt mask file should be reported as an error, not crash."""
 
-        def _fake_corrupt(ct_path_arg: str, output_dir: str) -> None:
+        def _fake_corrupt(ct_path_arg: str, output_dir: str, **kwargs: object) -> None:
             os.makedirs(output_dir, exist_ok=True)
             # Create a non-NIfTI file at a TS structure path
             bad_path = os.path.join(output_dir, "heart_atrium_left.nii.gz")
