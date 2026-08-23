@@ -66,18 +66,23 @@ class SegmentationResult:
     success: bool = True
     la_fat_volume_adaptive_ml: float = 0.0
     la_fat_volume_conservative_ml: float = 0.0
+    la_fat_volume_gmm_bayes_ml: float = 0.0
     total_eat_volume_adaptive_ml: float = 0.0
     total_eat_volume_conservative_ml: float = 0.0
+    total_eat_volume_gmm_bayes_ml: float = 0.0
     pericardium_volume_ml: float = 0.0
     unassigned_volume_ml: float = 0.0
     unassigned_fat_pct: float = 0.0
     anchor_volumes_ml: Dict[str, float] = dataclasses.field(default_factory=dict)
     fat_hu_range_adaptive: Tuple[float, float] = (-190.0, -30.0)
     fat_hu_range_conservative: Tuple[float, float] = (-190.0, -30.0)
+    fat_hu_range_gmm_bayes: Tuple[float, float] = (-190.0, -30.0)
     gaussian_fit_mu: Optional[float] = None
     gaussian_fit_sigma: Optional[float] = None
     gaussian_fit_success: bool = False
-    is_bayesian_regularized: bool = False
+    gmm_bayes_mu_fat: Optional[float] = None
+    gmm_bayes_sigma_fat: Optional[float] = None
+    gmm_bayes_weight_fat: Optional[float] = None
     quality_flags: List[QualityFlag] = dataclasses.field(default_factory=list)
     quality_flags_count_by_tier: Dict[str, int] = dataclasses.field(
         default_factory=lambda: {"high": 0, "medium": 0, "low": 0}
@@ -86,6 +91,8 @@ class SegmentationResult:
     total_removed_volume_mm3: float = 0.0
     mask_1_5mm_path: Optional[str] = None
     mask_native_path: Optional[str] = None
+    mask_conservative_native_path: Optional[str] = None
+    mask_gmm_bayes_native_path: Optional[str] = None
     qa_report_path: Optional[str] = None
     qa_record: Optional[Dict[str, Any]] = None
     errors: List[str] = dataclasses.field(default_factory=list)
@@ -116,18 +123,23 @@ class SegmentationResult:
             "success": self.success,
             "la_fat_volume_adaptive_ml": self.la_fat_volume_adaptive_ml,
             "la_fat_volume_conservative_ml": self.la_fat_volume_conservative_ml,
+            "la_fat_volume_gmm_bayes_ml": self.la_fat_volume_gmm_bayes_ml,
             "total_eat_volume_adaptive_ml": self.total_eat_volume_adaptive_ml,
             "total_eat_volume_conservative_ml": self.total_eat_volume_conservative_ml,
+            "total_eat_volume_gmm_bayes_ml": self.total_eat_volume_gmm_bayes_ml,
             "pericardium_volume_ml": self.pericardium_volume_ml,
             "unassigned_volume_ml": self.unassigned_volume_ml,
             "unassigned_fat_pct": self.unassigned_fat_pct,
             "anchor_volumes_ml": self.anchor_volumes_ml,
             "fat_hu_range_adaptive": list(self.fat_hu_range_adaptive),
             "fat_hu_range_conservative": list(self.fat_hu_range_conservative),
+            "fat_hu_range_gmm_bayes": list(self.fat_hu_range_gmm_bayes),
             "gaussian_fit_mu": self.gaussian_fit_mu,
             "gaussian_fit_sigma": self.gaussian_fit_sigma,
             "gaussian_fit_success": self.gaussian_fit_success,
-            "is_bayesian_regularized": self.is_bayesian_regularized,
+            "gmm_bayes_mu_fat": self.gmm_bayes_mu_fat,
+            "gmm_bayes_sigma_fat": self.gmm_bayes_sigma_fat,
+            "gmm_bayes_weight_fat": self.gmm_bayes_weight_fat,
             "quality_flags": [
                 {
                     "severity": f.severity,
@@ -383,7 +395,7 @@ def run_fat_extraction(
         )
         cleaned_la_fat_mask = partition_result.la_fat_mask
 
-    # 9. Compute Volumetric Metrics (Adaptive & Conservative)
+    # 9. Compute Volumetric Metrics (Adaptive, Conservative, and GMM Bayes)
     la_fat_volume_adaptive_ml = float(np.sum(cleaned_la_fat_mask) * voxel_vol_ml)
     total_eat_volume_adaptive_ml = float(partition_result.total_fat_volume_ml)
     pericardium_volume_ml = float(pericardium_result.volume_ml)
@@ -398,14 +410,26 @@ def run_fat_extraction(
     la_fat_volume_conservative_ml = float(np.sum(la_conservative_mask) * voxel_vol_ml)
     total_eat_volume_conservative_ml = float(np.sum(conservative_fat_mask) * voxel_vol_ml)
 
-    # 10. Dual-Grid Radiomics Export
+    # GMM Bayes decision boundary window
+    gmm_low, gmm_high = threshold_result.gmm_bayes_window
+    gmm_fat_mask = (
+        pericardium_mask & (ct_array >= gmm_low) & (ct_array <= gmm_high)
+    )
+    la_gmm_mask = gmm_fat_mask & (partition_result.anchor_assignments == 1)
+    la_fat_volume_gmm_bayes_ml = float(np.sum(la_gmm_mask) * voxel_vol_ml)
+    total_eat_volume_gmm_bayes_ml = float(np.sum(gmm_fat_mask) * voxel_vol_ml)
+
+    # 10. Tri-Track Radiomics Export
     os.makedirs(patient_output_dir, exist_ok=True)
     mask_1_5mm_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_1.5mm.nii.gz")
     legacy_mask_path = os.path.join(patient_output_dir, "la_fat_mask.nii.gz")
     mask_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_native.nii.gz")
+    mask_final_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_final_native.nii.gz")
+    mask_conservative_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_conservative_native.nii.gz")
+    mask_gmm_bayes_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_gmm_bayes_native.nii.gz")
 
     try:
-        # Save 1.5mm mask
+        # Save 1.5mm adaptive mask
         nifti_io.save_nifti(
             cleaned_la_fat_mask.astype(np.uint8),
             mask_1_5mm_path,
@@ -422,7 +446,7 @@ def run_fat_extraction(
             direction=geo_1_5mm.direction,
         )
 
-        # Resample back to native CT resolution (512x512)
+        # Resample Adaptive mask back to native CT resolution (512x512)
         native_resample = resample_to_reference(
             cleaned_la_fat_mask.astype(np.uint8),
             reference_or_path=raw_ct_path,
@@ -436,7 +460,45 @@ def run_fat_extraction(
             origin=raw_geometry.origin,
             direction=raw_geometry.direction,
         )
-        logger.info("Saved dual-grid masks: 1.5mm (%s) & Native (%s)", mask_1_5mm_path, mask_native_path)
+        nifti_io.save_nifti(
+            native_resample.array.astype(np.uint8),
+            mask_final_native_path,
+            spacing=raw_geometry.spacing,
+            origin=raw_geometry.origin,
+            direction=raw_geometry.direction,
+        )
+
+        # Resample Conservative mask to native CT resolution
+        native_cons_resample = resample_to_reference(
+            la_conservative_mask.astype(np.uint8),
+            reference_or_path=raw_ct_path,
+            reference_geometry=raw_geometry,
+            is_label=True,
+        )
+        nifti_io.save_nifti(
+            native_cons_resample.array.astype(np.uint8),
+            mask_conservative_native_path,
+            spacing=raw_geometry.spacing,
+            origin=raw_geometry.origin,
+            direction=raw_geometry.direction,
+        )
+
+        # Resample GMM Bayes mask to native CT resolution
+        native_gmm_resample = resample_to_reference(
+            la_gmm_mask.astype(np.uint8),
+            reference_or_path=raw_ct_path,
+            reference_geometry=raw_geometry,
+            is_label=True,
+        )
+        nifti_io.save_nifti(
+            native_gmm_resample.array.astype(np.uint8),
+            mask_gmm_bayes_native_path,
+            spacing=raw_geometry.spacing,
+            origin=raw_geometry.origin,
+            direction=raw_geometry.direction,
+        )
+
+        logger.info("Saved tri-track masks: Adaptive, Conservative, GMM Bayes for %s", patient_id)
     except Exception as exc:
         msg = f"Failed to export NIfTI masks: {exc}"
         warnings.append(msg)
@@ -471,6 +533,8 @@ def run_fat_extraction(
                 "pericardium_volume_ml": pericardium_volume_ml,
                 "la_conservative_volume_ml": la_fat_volume_conservative_ml,
                 "eat_conservative_volume_ml": total_eat_volume_conservative_ml,
+                "la_gmm_bayes_volume_ml": la_fat_volume_gmm_bayes_ml,
+                "eat_gmm_bayes_volume_ml": total_eat_volume_gmm_bayes_ml,
                 "gaussian_fit": {
                     "success": not threshold_result.is_fallback,
                     "mu": threshold_result.fitted_mu,
@@ -505,30 +569,41 @@ def run_fat_extraction(
             logger.warning(msg)
 
     # 13. Construct and Save SegmentationResult
+    gmm_mu = threshold_result.gmm_bayes_result.fitted_mu_fat if threshold_result.gmm_bayes_result else None
+    gmm_sigma = threshold_result.gmm_bayes_result.fitted_sigma_fat if threshold_result.gmm_bayes_result else None
+    gmm_wt = threshold_result.gmm_bayes_result.weight_fat if threshold_result.gmm_bayes_result else None
+
     total_runtime = time.perf_counter() - start_time
     result = SegmentationResult(
         patient_id=patient_id,
         success=len(errors) == 0,
         la_fat_volume_adaptive_ml=la_fat_volume_adaptive_ml,
         la_fat_volume_conservative_ml=la_fat_volume_conservative_ml,
+        la_fat_volume_gmm_bayes_ml=la_fat_volume_gmm_bayes_ml,
         total_eat_volume_adaptive_ml=total_eat_volume_adaptive_ml,
         total_eat_volume_conservative_ml=total_eat_volume_conservative_ml,
+        total_eat_volume_gmm_bayes_ml=total_eat_volume_gmm_bayes_ml,
         pericardium_volume_ml=pericardium_volume_ml,
         unassigned_volume_ml=unassigned_vol,
         unassigned_fat_pct=unassigned_pct,
         anchor_volumes_ml=partition_result.anchor_volumes_ml,
         fat_hu_range_adaptive=(threshold_result.hu_low, threshold_result.hu_high),
         fat_hu_range_conservative=(threshold_result.conservative_hu_low, threshold_result.conservative_hu_high),
+        fat_hu_range_gmm_bayes=threshold_result.gmm_bayes_window,
         gaussian_fit_mu=threshold_result.fitted_mu,
         gaussian_fit_sigma=threshold_result.fitted_sigma,
         gaussian_fit_success=not threshold_result.is_fallback,
-        is_bayesian_regularized=threshold_result.is_bayesian_regularized,
+        gmm_bayes_mu_fat=gmm_mu,
+        gmm_bayes_sigma_fat=gmm_sigma,
+        gmm_bayes_weight_fat=gmm_wt,
         quality_flags=quality_flags,
         quality_flags_count_by_tier=tier_counts,
         islands_removed=cleanup_result.islands_removed,
         total_removed_volume_mm3=cleanup_result.total_removed_volume_mm3,
         mask_1_5mm_path=mask_1_5mm_path,
         mask_native_path=mask_native_path,
+        mask_conservative_native_path=mask_conservative_native_path,
+        mask_gmm_bayes_native_path=mask_gmm_bayes_native_path,
         qa_report_path=qa_report_path,
         qa_record=qa_record,
         errors=errors,

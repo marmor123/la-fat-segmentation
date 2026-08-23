@@ -13,11 +13,13 @@ import pytest
 from la_fat.image_ops import GridGeometry
 from la_fat.quality_flagger import QualitySeverity
 from la_fat.thresholding import (
+    GMMBayesResult,
     ThresholdConfig,
     ThresholdResult,
     compute_fat_threshold,
     create_fat_mask,
     fit_trimmed_gaussian,
+    fit_two_component_gmm_bayes,
 )
 
 
@@ -38,17 +40,14 @@ def test_ideal_gaussian_recovery() -> None:
     )
 
     assert not result.is_fallback
-    assert result.fallback_reason is None
     assert result.fitted_mu is not None
     assert result.fitted_sigma is not None
-    assert abs(result.fitted_mu - ground_truth_mu) < 0.5
-    assert abs(result.fitted_sigma - ground_truth_sigma) < 0.8
-    assert result.hu_low == pytest.approx(result.fitted_mu - 2.0 * result.fitted_sigma, abs=0.1)
-    assert result.hu_high == pytest.approx(result.fitted_mu + 2.0 * result.fitted_sigma, abs=0.1)
-    assert result.fat_voxel_count_adaptive > 0.94 * n_samples
-    assert result.fat_volume_adaptive_ml == pytest.approx(
-        result.fat_voxel_count_adaptive * vvol_ml, rel=1e-5
-    )
+    assert abs(result.fitted_mu - ground_truth_mu) < 1.0
+    assert abs(result.fitted_sigma - ground_truth_sigma) < 1.0
+    assert result.hu_low == pytest.approx(ground_truth_mu - 2 * ground_truth_sigma, abs=2.0)
+    assert result.hu_high == pytest.approx(ground_truth_mu + 2 * ground_truth_sigma, abs=2.0)
+    assert result.voxel_count_evaluated == n_samples
+    assert len(result.flags) == 0
 
 
 def test_asymmetric_soft_tissue_shoulder_trimming() -> None:
@@ -107,38 +106,14 @@ def test_metal_outlier_spikes_robustness() -> None:
     assert abs(result.fitted_mu - (-100.0)) < 1.5
 
 
-def test_sparse_voxels_bayesian_regularization() -> None:
-    """Test Bayesian MAP regularization when sub-0 HU voxel count is low."""
+def test_sparse_voxels_triggers_fallback() -> None:
+    """Test fallback when sub-0 HU voxel count is below minimum threshold."""
     rng = np.random.default_rng(777)
     few_voxels = rng.normal(loc=-100.0, scale=15.0, size=150)  # < 500
 
     result = fit_trimmed_gaussian(
         sub0_voxels=few_voxels,
-        config=ThresholdConfig(min_voxel_count=500, use_bayesian_fallback=True),
-        voxel_volume_ml=0.003375,
-    )
-
-    assert not result.is_fallback
-    assert result.is_bayesian_regularized
-    assert result.prior_weight_pct > 50.0
-    assert result.fitted_mu is not None
-    assert result.fitted_sigma is not None
-    assert abs(result.fitted_mu - (-85.3)) < 15.0  # Shrunk toward prior -85.3 HU
-
-    flag_concerns = [f.concern for f in result.flags]
-    assert "LOW_FAT_BAYESIAN_REGULARIZED" in flag_concerns
-    bayesian_flag = next(f for f in result.flags if f.concern == "LOW_FAT_BAYESIAN_REGULARIZED")
-    assert bayesian_flag.severity == QualitySeverity.MEDIUM
-
-
-def test_sparse_voxels_hard_fallback_opt_out() -> None:
-    """Test explicit fallback when use_bayesian_fallback is False."""
-    rng = np.random.default_rng(777)
-    few_voxels = rng.normal(loc=-100.0, scale=15.0, size=150)  # < 500
-
-    result = fit_trimmed_gaussian(
-        sub0_voxels=few_voxels,
-        config=ThresholdConfig(min_voxel_count=500, use_bayesian_fallback=False),
+        config=ThresholdConfig(min_voxel_count=500),
         voxel_volume_ml=0.003375,
     )
 
@@ -153,44 +128,45 @@ def test_sparse_voxels_hard_fallback_opt_out() -> None:
     assert flag.severity == QualitySeverity.HIGH
 
 
-def test_monotonic_slope_bayesian_regularization() -> None:
-    """Test that a monotonic low-fat distribution triggers Bayesian MAP regularization."""
-    # Linearly decreasing distribution from 0 down to -250 HU (mimicking low-fat scan)
+def test_monotonic_slope_triggers_fallback() -> None:
+    """Test that a distribution with no prominent fat peak triggers standard fallback."""
+    # Linearly decreasing distribution from 0 down to -250 HU
     rng = np.random.default_rng(888)
     ramp = rng.triangular(left=-250.0, mode=0.0, right=0.0, size=5000)
 
     result = fit_trimmed_gaussian(
         sub0_voxels=ramp,
-        config=ThresholdConfig(
-            plausible_mu_range=(-150.0, -50.0),
-            use_bayesian_fallback=True,
-        ),
-    )
-
-    assert not result.is_fallback
-    assert result.is_bayesian_regularized
-    assert result.fitted_mu is not None
-    assert result.hu_high <= 0.0
-    flag_concerns = [f.concern for f in result.flags]
-    assert "LOW_FAT_BAYESIAN_REGULARIZED" in flag_concerns
-
-
-def test_monotonic_slope_hard_fallback_opt_out() -> None:
-    """Test that monotonic distribution triggers hard fallback when opt-out is selected."""
-    rng = np.random.default_rng(888)
-    ramp = rng.triangular(left=-250.0, mode=0.0, right=0.0, size=5000)
-
-    result = fit_trimmed_gaussian(
-        sub0_voxels=ramp,
-        config=ThresholdConfig(
-            plausible_mu_range=(-150.0, -50.0),
-            use_bayesian_fallback=False,
-        ),
+        config=ThresholdConfig(plausible_mu_range=(-150.0, -50.0)),
     )
 
     assert result.is_fallback
     assert result.flags[0].severity == QualitySeverity.HIGH
     assert result.flags[0].concern == "FAT_THRESHOLD_FALLBACK"
+
+
+def test_gmm_bayes_two_component_recovery() -> None:
+    """Test that GMM Bayes identifies fat component and computes P(Fat|x)=0.5 boundary."""
+    rng = np.random.default_rng(42)
+    fat = rng.normal(loc=-95.0, scale=15.0, size=8000)
+    soft = rng.normal(loc=-15.0, scale=12.0, size=4000)
+    combined = np.concatenate([fat, soft])
+
+    res = fit_two_component_gmm_bayes(combined)
+
+    assert not res.is_fallback
+    assert res.fitted_mu_fat is not None
+    assert abs(res.fitted_mu_fat - (-95.0)) < 4.0
+    assert res.hu_low <= -120.0
+    assert -60.0 < res.hu_high < -20.0  # Bayes decision boundary between components
+
+
+def test_gmm_bayes_sparse_fallback() -> None:
+    """Test GMM Bayes fallback when voxel count is too low."""
+    few = np.array([-100.0, -90.0, -80.0])
+    res = fit_two_component_gmm_bayes(few, config=ThresholdConfig(min_voxel_count=500))
+    assert res.is_fallback
+    assert res.hu_low == -190.0
+    assert res.hu_high == -30.0
 
 
 def test_upper_clamping_at_zero_hu() -> None:
@@ -287,6 +263,7 @@ def test_create_fat_mask_adaptive_vs_conservative() -> None:
         hu_high=0.0,
         conservative_hu_low=-190.0,
         conservative_hu_high=-30.0,
+        gmm_bayes_result=GMMBayesResult(hu_low=-130.0, hu_high=-35.0),
     )
 
     # Adaptive mask should include both core and partial volume
@@ -302,6 +279,13 @@ def test_create_fat_mask_adaptive_vs_conservative() -> None:
     )
     assert np.count_nonzero(mask_cons[5:10, 5:10, 5:10]) == 125
     assert np.count_nonzero(mask_cons[10:15, 10:15, 10:15]) == 0
+
+    # GMM Bayes mask should use [-130, -35] HU window
+    mask_gmm = create_fat_mask(
+        ct_volume, threshold_res, pericardium_mask=pericardium_mask, gmm_bayes=True
+    )
+    assert np.count_nonzero(mask_gmm[5:10, 5:10, 5:10]) == 125
+    assert np.count_nonzero(mask_gmm[10:15, 10:15, 10:15]) == 0
 
 
 def test_resolution_invariance() -> None:

@@ -172,6 +172,19 @@ def run_benchmark_for_patient(
     cons_cleanup = cleanup_la_fat_mask(cons_part_result.la_fat_mask, config, spacing)
     la_fat_vol_conservative_ml = int(np.sum(cons_cleanup.cleaned_mask)) * voxel_vol_ml
 
+    # GMM Bayes LA Fat (P(Fat|x) >= 0.5 decision boundary)
+    gmm_low, gmm_high = thresh_result.gmm_bayes_window
+    gmm_fat_mask = (ct_array >= gmm_low) & (ct_array <= gmm_high) & peri_result.mask
+    gmm_part_result = partition_fat(
+        pericardium_mask=peri_result.mask,
+        fat_mask=gmm_fat_mask,
+        anchor_masks=anchor_masks,
+        config=part_cfg,
+        geometry=geo_1_5mm,
+    )
+    gmm_cleanup = cleanup_la_fat_mask(gmm_part_result.la_fat_mask, config, spacing)
+    la_fat_vol_gmm_bayes_ml = int(np.sum(gmm_cleanup.cleaned_mask)) * voxel_vol_ml
+
     # 9. Quality Flags
     flags = generate_quality_flags(
         partition_result=part_result,
@@ -179,11 +192,14 @@ def run_benchmark_for_patient(
         cleanup_result=cleanup_result,
         config=config,
     )
-    high_flags = [f for f in flags if f.severity == "HIGH"]
-    med_flags = [f for f in flags if f.severity == "MEDIUM"]
-    low_flags = [f for f in flags if f.severity == "LOW"]
+    if thresh_result.flags:
+        flags.extend(thresh_result.flags)
+    high_flags = [f for f in flags if f.severity == "HIGH" or f.severity == "high"]
+    med_flags = [f for f in flags if f.severity == "MEDIUM" or f.severity == "medium"]
+    low_flags = [f for f in flags if f.severity == "LOW" or f.severity == "low"]
 
     print(f"[+] LA Fat (Adaptive): {la_fat_vol_adaptive_ml:.2f} mL vs Scanner Baseline: {meta['scanner_la_eat_ml']:.2f} mL")
+    print(f"[+] LA Fat (GMM Bayes): {la_fat_vol_gmm_bayes_ml:.2f} mL (Window: [{gmm_low:.1f}, {gmm_high:.1f}] HU)")
     print(f"[+] LA Fat (Conservative): {la_fat_vol_conservative_ml:.2f} mL")
     print(f"[+] Topological Purity: {part_result.metrics.primary_component_fraction * 100:.1f}%")
 
@@ -203,6 +219,8 @@ def run_benchmark_for_patient(
     # Native resolution projection & save
     raw_img = sitk.ReadImage(raw_ct_path)
     raw_geo = GridGeometry.from_sitk_image(raw_img)
+
+    # Native Adaptive Mask
     native_resample = resample_to_reference(
         cleaned_la_fat.astype(np.uint8),
         raw_img,
@@ -217,7 +235,40 @@ def run_benchmark_for_patient(
         origin=raw_geo.origin,
         direction=raw_geo.direction,
     )
-    print(f"[+] Saved native radiomics mask: {os.path.join(patient_out_dir, 'la_fat_final_native.nii.gz')}")
+
+    # Native Conservative Mask
+    native_cons_resample = resample_to_reference(
+        cons_cleanup.cleaned_mask.astype(np.uint8),
+        raw_img,
+        is_label=True,
+        moving_geometry=geo_1_5mm,
+        reference_geometry=raw_geo,
+    )
+    nifti_io.save_nifti(
+        native_cons_resample.array.astype(np.uint8),
+        os.path.join(patient_out_dir, "la_fat_conservative_native.nii.gz"),
+        spacing=raw_geo.spacing,
+        origin=raw_geo.origin,
+        direction=raw_geo.direction,
+    )
+
+    # Native GMM Bayes Mask
+    native_gmm_resample = resample_to_reference(
+        gmm_cleanup.cleaned_mask.astype(np.uint8),
+        raw_img,
+        is_label=True,
+        moving_geometry=geo_1_5mm,
+        reference_geometry=raw_geo,
+    )
+    nifti_io.save_nifti(
+        native_gmm_resample.array.astype(np.uint8),
+        os.path.join(patient_out_dir, "la_fat_gmm_bayes_native.nii.gz"),
+        spacing=raw_geo.spacing,
+        origin=raw_geo.origin,
+        direction=raw_geo.direction,
+    )
+
+    print(f"[+] Saved tri-track native radiomics masks for {patient_id}")
 
     # 11. Extract Slices and Metrics for QA Dashboard
     delta_la = la_fat_vol_adaptive_ml - meta["scanner_la_eat_ml"]
@@ -235,13 +286,17 @@ def run_benchmark_for_patient(
         "scanner_la_eat_ml": meta["scanner_la_eat_ml"],
         "scanner_total_eat_ml": meta["scanner_total_eat_ml"],
         "la_vol_adaptive": la_fat_vol_adaptive_ml,
+        "la_vol_gmm_bayes": la_fat_vol_gmm_bayes_ml,
         "la_vol_std": la_fat_vol_conservative_ml,
         "total_eat_vol": thresh_result.fat_volume_adaptive_ml,
+        "total_eat_gmm_bayes": thresh_result.fat_volume_gmm_bayes_ml,
         "total_eat_std": thresh_result.fat_volume_conservative_ml,
         "delta_la_adaptive_ml": delta_la,
         "delta_la_adaptive_pct": delta_pct,
         "fitted_mu_hu": thresh_result.fitted_mu,
         "fitted_sigma_hu": thresh_result.fitted_sigma,
+        "gmm_bayes_low": gmm_low,
+        "gmm_bayes_high": gmm_high,
         "primary_component_purity": part_result.metrics.primary_component_fraction if part_result.metrics else 1.0,
         "high_flags": len(high_flags),
         "med_flags": len(med_flags),
@@ -293,15 +348,19 @@ def main() -> None:
             "sex": m["sex"],
             "scanner_la_eat_ml": m["scanner_la_eat_ml"],
             "pipeline_la_adaptive_ml": m["la_vol_adaptive"],
+            "pipeline_la_gmm_bayes_ml": m["la_vol_gmm_bayes"],
             "pipeline_la_conservative_ml": m["la_vol_std"],
             "delta_la_adaptive_ml": m["delta_la_adaptive_ml"],
             "delta_la_adaptive_pct": m["delta_la_adaptive_pct"],
             "scanner_total_eat_ml": m["scanner_total_eat_ml"],
             "pipeline_total_adaptive_ml": m["total_eat_vol"],
+            "pipeline_total_gmm_bayes_ml": m["total_eat_gmm_bayes"],
             "pipeline_total_conservative_ml": m["total_eat_std"],
             "primary_component_purity": m["primary_component_purity"],
             "fitted_mu_hu": m["fitted_mu_hu"],
             "fitted_sigma_hu": m["fitted_sigma_hu"],
+            "gmm_bayes_low": m["gmm_bayes_low"],
+            "gmm_bayes_high": m["gmm_bayes_high"],
             "high_flags": m["high_flags"],
             "med_flags": m["med_flags"],
             "low_flags": m["low_flags"],
@@ -312,19 +371,31 @@ def main() -> None:
     summary_df.to_csv(csv_path, index=False)
     print(f"[+] Saved summary CSV to: {csv_path}")
 
-    # 2. Compute Correlation Metrics
+    # 2. Compute Correlation Metrics across all 3 tracks
     x = summary_df["scanner_la_eat_ml"].values
-    y = summary_df["pipeline_la_adaptive_ml"].values
+    y_adapt = summary_df["pipeline_la_adaptive_ml"].values
+    y_gmm = summary_df["pipeline_la_gmm_bayes_ml"].values
+    y_cons = summary_df["pipeline_la_conservative_ml"].values
+
     if len(x) > 1:
-        pearson_r, p_val = stats.pearsonr(x, y)
-        spearman_rho, s_p_val = stats.spearmanr(x, y)
-        mape = np.mean(np.abs((y - x) / x)) * 100.0
+        r_adapt, p_adapt = stats.pearsonr(x, y_adapt)
+        rho_adapt, p_rho_adapt = stats.spearmanr(x, y_adapt)
+        mape_adapt = np.mean(np.abs((y_adapt - x) / x)) * 100.0
+
+        r_gmm, p_gmm = stats.pearsonr(x, y_gmm)
+        rho_gmm, p_rho_gmm = stats.spearmanr(x, y_gmm)
+        mape_gmm = np.mean(np.abs((y_gmm - x) / x)) * 100.0
+
+        r_cons, p_cons = stats.pearsonr(x, y_cons)
+        rho_cons, p_rho_cons = stats.spearmanr(x, y_cons)
+        mape_cons = np.mean(np.abs((y_cons - x) / x)) * 100.0
+
         print(f"\n=======================================================")
         print(f"COHORT CORRELATION RESULTS (N = {len(x)})")
         print(f"=======================================================")
-        print(f"Pearson Correlation (r):       {pearson_r:.4f} (p = {p_val:.2e})")
-        print(f"Spearman Rank (rho):          {spearman_rho:.4f} (p = {s_p_val:.2e})")
-        print(f"Mean Absolute % Error (MAPE): {mape:.2f}%")
+        print(f"1. Adaptive Trimmed Gaussian: r = {r_adapt:.4f} (p = {p_adapt:.2e}), rho = {rho_adapt:.4f}, MAPE = {mape_adapt:.2f}%")
+        print(f"2. GMM Bayes (P >= 0.5):      r = {r_gmm:.4f} (p = {p_gmm:.2e}), rho = {rho_gmm:.4f}, MAPE = {mape_gmm:.2f}%")
+        print(f"3. Conservative [-190,-30]:  r = {r_cons:.4f} (p = {p_cons:.2e}), rho = {rho_cons:.4f}, MAPE = {mape_cons:.2f}%")
         print(f"=======================================================")
 
     # 3. Generate HTML5 Cohort Viewer
