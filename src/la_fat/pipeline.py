@@ -77,6 +77,7 @@ class SegmentationResult:
     gaussian_fit_mu: Optional[float] = None
     gaussian_fit_sigma: Optional[float] = None
     gaussian_fit_success: bool = False
+    is_bayesian_regularized: bool = False
     quality_flags: List[QualityFlag] = dataclasses.field(default_factory=list)
     quality_flags_count_by_tier: Dict[str, int] = dataclasses.field(
         default_factory=lambda: {"high": 0, "medium": 0, "low": 0}
@@ -126,6 +127,7 @@ class SegmentationResult:
             "gaussian_fit_mu": self.gaussian_fit_mu,
             "gaussian_fit_sigma": self.gaussian_fit_sigma,
             "gaussian_fit_success": self.gaussian_fit_success,
+            "is_bayesian_regularized": self.is_bayesian_regularized,
             "quality_flags": [
                 {
                     "severity": f.severity,
@@ -520,6 +522,7 @@ def run_fat_extraction(
         gaussian_fit_mu=threshold_result.fitted_mu,
         gaussian_fit_sigma=threshold_result.fitted_sigma,
         gaussian_fit_success=not threshold_result.is_fallback,
+        is_bayesian_regularized=threshold_result.is_bayesian_regularized,
         quality_flags=quality_flags,
         quality_flags_count_by_tier=tier_counts,
         islands_removed=cleanup_result.islands_removed,

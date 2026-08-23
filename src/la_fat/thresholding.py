@@ -68,6 +68,10 @@ class ThresholdConfig:
     trim_window_left_hu: float = 35.0
     trim_window_right_hu: float = 30.0
     wide_sigma_warn_hu: float = 25.0
+    prior_mu_hu: float = -85.3
+    prior_sigma_hu: float = 32.6
+    prior_weight_k0: float = 1500.0
+    use_bayesian_fallback: bool = True
 
     @classmethod
     def from_pipeline_config(cls, cfg: object) -> ThresholdConfig:
@@ -82,6 +86,10 @@ class ThresholdConfig:
                 min_voxel_count=int(cfg.get("min_fat_voxels", 500)),
                 peak_prominence_ratio=float(cfg.get("fat_peak_prominence_ratio", 0.003)),
                 wide_sigma_warn_hu=float(cfg.get("fat_wide_sigma_warn_hu", 25.0)),
+                prior_mu_hu=float(cfg.get("fat_prior_mu_hu", -85.3)),
+                prior_sigma_hu=float(cfg.get("fat_prior_sigma_hu", 32.6)),
+                prior_weight_k0=float(cfg.get("fat_prior_weight_k0", 1500.0)),
+                use_bayesian_fallback=bool(cfg.get("fat_use_bayesian_fallback", True)),
             )
         return cls(
             fallback_low_hu=float(getattr(cfg, "fat_hu_low", -190.0)),
@@ -92,6 +100,10 @@ class ThresholdConfig:
             min_voxel_count=int(getattr(cfg, "min_fat_voxels", 500)),
             peak_prominence_ratio=float(getattr(cfg, "fat_peak_prominence_ratio", 0.003)),
             wide_sigma_warn_hu=float(getattr(cfg, "fat_wide_sigma_warn_hu", 25.0)),
+            prior_mu_hu=float(getattr(cfg, "fat_prior_mu_hu", -85.3)),
+            prior_sigma_hu=float(getattr(cfg, "fat_prior_sigma_hu", 32.6)),
+            prior_weight_k0=float(getattr(cfg, "fat_prior_weight_k0", 1500.0)),
+            use_bayesian_fallback=bool(getattr(cfg, "fat_use_bayesian_fallback", True)),
         )
 
 
@@ -133,6 +145,10 @@ class ThresholdResult:
         Quantified physical fat volume in mL using adaptive window.
     fat_volume_conservative_ml:
         Quantified physical fat volume in mL using conservative window.
+    is_bayesian_regularized:
+        True if Bayesian MAP prior shrinkage was engaged for low-fat scan.
+    prior_weight_pct:
+        Prior influence percentage on the fitted parameters (0 to 100%).
     flags:
         List of auditable quality flags with severity tiers.
     """
@@ -153,6 +169,8 @@ class ThresholdResult:
     fat_voxel_count_conservative: int = 0
     fat_volume_adaptive_ml: float = 0.0
     fat_volume_conservative_ml: float = 0.0
+    is_bayesian_regularized: bool = False
+    prior_weight_pct: float = 0.0
     flags: list[QualityFlag] = field(default_factory=list)
 
     @property
@@ -247,12 +265,131 @@ def fit_trimmed_gaussian(
             fat_voxel_count_conservative=fat_count_cons,
             fat_volume_adaptive_ml=fat_vol_adapt,
             fat_volume_conservative_ml=fat_vol_cons,
+            is_bayesian_regularized=False,
+            prior_weight_pct=0.0,
             flags=fallback_flags,
         )
 
+    def _fit_bayesian_map_regularization(reason: str) -> ThresholdResult:
+        """Perform conjugate Normal-Inverse-Gamma Bayesian MAP regularization."""
+        sample_v = filtered[(filtered >= -180.0) & (filtered <= -10.0)]
+        n_eff = len(sample_v)
+
+        k0 = float(config.prior_weight_k0)
+        mu0 = float(config.prior_mu_hu)
+        sigma0 = float(config.prior_sigma_hu)
+
+        if n_eff > 10:
+            sample_mean = float(np.mean(sample_v))
+        else:
+            sample_mean = mu0
+            n_eff = 0
+
+        mu_map = float((k0 * mu0 + n_eff * sample_mean) / (k0 + n_eff))
+
+        alpha0 = 10.0
+        beta0 = alpha0 * (sigma0 ** 2)
+        alpha_post = alpha0 + n_eff / 2.0
+        beta_post = beta0 + (
+            0.5 * float(np.sum((sample_v - sample_mean) ** 2)) if n_eff > 0 else 0.0
+        ) + ((k0 * n_eff * (sample_mean - mu0) ** 2) / (2.0 * (k0 + n_eff)))
+        sigma_map = float(np.sqrt(beta_post / (alpha_post + 1.5)))
+
+        raw_low = mu_map - config.sigma_multiplier * sigma_map
+        raw_high = mu_map + config.sigma_multiplier * sigma_map
+
+        clamped_low = False
+        clamped_high = False
+        final_low = raw_low
+        final_high = raw_high
+
+        res_flags = list(flags)
+        if raw_low < config.fallback_low_hu:
+            final_low = config.fallback_low_hu
+            clamped_low = True
+            res_flags.append(
+                QualityFlag(
+                    severity=QualitySeverity.LOW,
+                    concern="FAT_LOWER_BOUND_CLAMPED",
+                    detail=(
+                        f"Bayesian lower threshold {raw_low:.1f} HU clamped to "
+                        f"fallback {config.fallback_low_hu:.1f} HU"
+                    ),
+                    threshold_value=config.fallback_low_hu,
+                    actual_value=raw_low,
+                )
+            )
+
+        if raw_high > config.clamping_max_hu:
+            final_high = config.clamping_max_hu
+            clamped_high = True
+            res_flags.append(
+                QualityFlag(
+                    severity=QualitySeverity.LOW,
+                    concern="FAT_UPPER_BOUND_CLAMPED",
+                    detail=(
+                        f"Bayesian upper threshold {raw_high:.1f} HU clamped to "
+                        f"ceiling {config.clamping_max_hu:.1f} HU"
+                    ),
+                    threshold_value=config.clamping_max_hu,
+                    actual_value=raw_high,
+                )
+            )
+
+        prior_wt_pct = float((k0 / (k0 + n_eff)) * 100.0) if (k0 + n_eff) > 0 else 100.0
+
+        res_flags.append(
+            QualityFlag(
+                severity=QualitySeverity.MEDIUM,
+                concern="LOW_FAT_BAYESIAN_REGULARIZED",
+                detail=(
+                    f"Sparse/monotonic fat distribution regularized via Bayesian MAP prior "
+                    f"(mu={mu_map:.1f} HU, sigma={sigma_map:.1f} HU, prior weight: {prior_wt_pct:.1f}%). "
+                    f"Trigger reason: {reason}"
+                ),
+                threshold_value=50.0,
+                actual_value=prior_wt_pct,
+            )
+        )
+
+        fat_count_adapt = int(np.sum((arr >= final_low) & (arr <= final_high)))
+        fat_vol_adapt = fat_count_adapt * voxel_volume_ml
+
+        fat_count_cons = int(
+            np.sum((arr >= config.fallback_low_hu) & (arr <= config.fallback_high_hu))
+        )
+        fat_vol_cons = fat_count_cons * voxel_volume_ml
+
+        return ThresholdResult(
+            hu_low=final_low,
+            hu_high=final_high,
+            conservative_hu_low=config.fallback_low_hu,
+            conservative_hu_high=config.fallback_high_hu,
+            fitted_mu=mu_map,
+            fitted_sigma=sigma_map,
+            fitted_amplitude=None,
+            is_fallback=False,
+            fallback_reason=None,
+            clamped_low=clamped_low,
+            clamped_high=clamped_high,
+            voxel_count_evaluated=int(len(filtered)),
+            fat_voxel_count_adaptive=fat_count_adapt,
+            fat_voxel_count_conservative=fat_count_cons,
+            fat_volume_adaptive_ml=fat_vol_adapt,
+            fat_volume_conservative_ml=fat_vol_cons,
+            is_bayesian_regularized=True,
+            prior_weight_pct=prior_wt_pct,
+            flags=res_flags,
+        )
+
+    def _handle_failure(reason: str) -> ThresholdResult:
+        if config.use_bayesian_fallback and n_voxels > 0:
+            return _fit_bayesian_map_regularization(reason)
+        return _make_fallback(reason)
+
     # Guard: insufficient voxels
     if n_voxels < config.min_voxel_count:
-        return _make_fallback(
+        return _handle_failure(
             f"Insufficient sub-0 HU voxels ({n_voxels} < {config.min_voxel_count})"
         )
 
@@ -279,7 +416,7 @@ def fit_trimmed_gaussian(
         if config.plausible_mu_range[0] <= centers[p] <= config.plausible_mu_range[1]
     ]
     if not fat_peaks:
-        return _make_fallback("No prominent adipose peak detected in sub-0 HU distribution")
+        return _handle_failure("No prominent adipose peak detected in sub-0 HU distribution")
 
     # Select most prominent peak
     peak_proms = props["prominences"]
@@ -294,7 +431,7 @@ def fit_trimmed_gaussian(
     y_trim = smoothed[trim_mask]
 
     if len(x_trim) < 10:
-        return _make_fallback("Trimmed fitting window contains too few bin points")
+        return _handle_failure("Trimmed fitting window contains too few bin points")
 
     # 6. Nonlinear least-squares Gaussian curve fit
     try:
@@ -311,12 +448,12 @@ def fit_trimmed_gaussian(
             maxfev=3000,
         )
     except Exception as ex:
-        return _make_fallback(f"Gaussian curve_fit optimization failure: {ex}")
+        return _handle_failure(f"Gaussian curve_fit optimization failure: {ex}")
 
     a, mu, sigma = float(popt[0]), float(popt[1]), float(popt[2])
 
     if not (np.isfinite(mu) and np.isfinite(sigma) and sigma > 0):
-        return _make_fallback("Fitted parameters contain NaN or non-positive sigma")
+        return _handle_failure("Fitted parameters contain NaN or non-positive sigma")
 
     # 7. Compute patient-specific window
     raw_low = mu - config.sigma_multiplier * sigma

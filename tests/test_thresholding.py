@@ -107,14 +107,38 @@ def test_metal_outlier_spikes_robustness() -> None:
     assert abs(result.fitted_mu - (-100.0)) < 1.5
 
 
-def test_sparse_voxels_triggers_fallback() -> None:
-    """Test fallback when sub-0 HU voxel count is below minimum threshold."""
+def test_sparse_voxels_bayesian_regularization() -> None:
+    """Test Bayesian MAP regularization when sub-0 HU voxel count is low."""
     rng = np.random.default_rng(777)
     few_voxels = rng.normal(loc=-100.0, scale=15.0, size=150)  # < 500
 
     result = fit_trimmed_gaussian(
         sub0_voxels=few_voxels,
-        config=ThresholdConfig(min_voxel_count=500),
+        config=ThresholdConfig(min_voxel_count=500, use_bayesian_fallback=True),
+        voxel_volume_ml=0.003375,
+    )
+
+    assert not result.is_fallback
+    assert result.is_bayesian_regularized
+    assert result.prior_weight_pct > 50.0
+    assert result.fitted_mu is not None
+    assert result.fitted_sigma is not None
+    assert abs(result.fitted_mu - (-85.3)) < 15.0  # Shrunk toward prior -85.3 HU
+
+    flag_concerns = [f.concern for f in result.flags]
+    assert "LOW_FAT_BAYESIAN_REGULARIZED" in flag_concerns
+    bayesian_flag = next(f for f in result.flags if f.concern == "LOW_FAT_BAYESIAN_REGULARIZED")
+    assert bayesian_flag.severity == QualitySeverity.MEDIUM
+
+
+def test_sparse_voxels_hard_fallback_opt_out() -> None:
+    """Test explicit fallback when use_bayesian_fallback is False."""
+    rng = np.random.default_rng(777)
+    few_voxels = rng.normal(loc=-100.0, scale=15.0, size=150)  # < 500
+
+    result = fit_trimmed_gaussian(
+        sub0_voxels=few_voxels,
+        config=ThresholdConfig(min_voxel_count=500, use_bayesian_fallback=False),
         voxel_volume_ml=0.003375,
     )
 
@@ -129,19 +153,44 @@ def test_sparse_voxels_triggers_fallback() -> None:
     assert flag.severity == QualitySeverity.HIGH
 
 
-def test_monotonic_slope_triggers_fallback() -> None:
-    """Test that a distribution with no prominent fat peak triggers fallback."""
-    # Linearly decreasing distribution from 0 down to -250 HU
+def test_monotonic_slope_bayesian_regularization() -> None:
+    """Test that a monotonic low-fat distribution triggers Bayesian MAP regularization."""
+    # Linearly decreasing distribution from 0 down to -250 HU (mimicking low-fat scan)
     rng = np.random.default_rng(888)
     ramp = rng.triangular(left=-250.0, mode=0.0, right=0.0, size=5000)
 
     result = fit_trimmed_gaussian(
         sub0_voxels=ramp,
-        config=ThresholdConfig(plausible_mu_range=(-150.0, -50.0)),
+        config=ThresholdConfig(
+            plausible_mu_range=(-150.0, -50.0),
+            use_bayesian_fallback=True,
+        ),
+    )
+
+    assert not result.is_fallback
+    assert result.is_bayesian_regularized
+    assert result.fitted_mu is not None
+    assert result.hu_high <= 0.0
+    flag_concerns = [f.concern for f in result.flags]
+    assert "LOW_FAT_BAYESIAN_REGULARIZED" in flag_concerns
+
+
+def test_monotonic_slope_hard_fallback_opt_out() -> None:
+    """Test that monotonic distribution triggers hard fallback when opt-out is selected."""
+    rng = np.random.default_rng(888)
+    ramp = rng.triangular(left=-250.0, mode=0.0, right=0.0, size=5000)
+
+    result = fit_trimmed_gaussian(
+        sub0_voxels=ramp,
+        config=ThresholdConfig(
+            plausible_mu_range=(-150.0, -50.0),
+            use_bayesian_fallback=False,
+        ),
     )
 
     assert result.is_fallback
     assert result.flags[0].severity == QualitySeverity.HIGH
+    assert result.flags[0].concern == "FAT_THRESHOLD_FALLBACK"
 
 
 def test_upper_clamping_at_zero_hu() -> None:
