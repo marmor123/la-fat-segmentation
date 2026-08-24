@@ -199,6 +199,27 @@ def handle_batch(args: argparse.Namespace) -> int:
 
 def handle_precompute(args: argparse.Namespace) -> int:
     """Execute TotalSegmentator mask precomputation on CT scans."""
+    if getattr(args, "set_license", None):
+        lic = args.set_license.strip()
+        ts_home = os.path.expanduser("~/.totalsegmentator")
+        os.makedirs(ts_home, exist_ok=True)
+        cfg_file = os.path.join(ts_home, "config.json")
+        cfg_data = {}
+        if os.path.isfile(cfg_file):
+            try:
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    cfg_data = json.load(f)
+            except Exception:
+                pass
+        cfg_data["totalseg_id"] = lic
+        cfg_data["license_number"] = lic
+        cfg_data["statistics_disclaimer_shown"] = True
+        with open(cfg_file, "w", encoding="utf-8") as f:
+            json.dump(cfg_data, f, indent=2)
+        print(f"[+] TotalSegmentator license configured successfully: {lic[:7]}...")
+        if not getattr(args, "patient", None) and not getattr(args, "input_dir", None) and not getattr(args, "all", False) and not getattr(args, "input_file", None):
+            return 0
+
     config = PipelineConfig.from_yaml(args.config) if getattr(args, "config", None) else PipelineConfig()
     output_dir = getattr(args, "output_dir", None) or os.path.join(config.data_dir, config.intermediate_subdir)
 
@@ -332,14 +353,31 @@ def handle_check(args: argparse.Namespace) -> int:
     except ImportError:
         print("  PyTorch:                NOT INSTALLED")
 
-    # 3. TotalSegmentator
+    # 3. TotalSegmentator & License
     ts_avail = is_ts_available()
+    ts_license_str = "NOT CONFIGURED (Required for heartchambers_highres)"
+    try:
+        ts_config_path = os.path.expanduser(
+            os.environ.get("TOTALSEG_CONFIG", "~/.totalsegmentator/config.json")
+        )
+        if os.path.isfile(ts_config_path):
+            with open(ts_config_path, "r", encoding="utf-8") as f:
+                ts_cfg = json.load(f)
+                lic = ts_cfg.get("license_number") or ts_cfg.get("totalseg_id")
+                if lic and lic.startswith("aca_"):
+                    ts_license_str = f"ACTIVE (Academic: {lic[:7]}...)"
+                elif lic:
+                    ts_license_str = f"ACTIVE ({lic[:7]}...)"
+    except Exception:
+        pass
+
     try:
         import totalsegmentator
         ts_ver = getattr(totalsegmentator, "__version__", "Installed")
         print(f"  TotalSegmentator:       AVAILABLE (v{ts_ver})")
     except ImportError:
         print(f"  TotalSegmentator:       {'CLI AVAILABLE' if ts_avail else 'NOT FOUND (Pre-computation requires TS)'}")
+    print(f"  TS Heart Model License: {ts_license_str}")
 
     # 4. Core Imaging Libraries
     try:
@@ -445,6 +483,7 @@ Examples:
     pre_parser.add_argument("-o", "--output-dir", default=None, help="Output directory for anatomical mask cache")
     pre_parser.add_argument("-d", "--device", default="auto", choices=["auto", "gpu", "cpu"], help="Inference device (default: auto)")
     pre_parser.add_argument("--fast", action="store_true", help="Use fast TotalSegmentator models where supported")
+    pre_parser.add_argument("--set-license", default=None, help="Set and register TotalSegmentator academic/commercial license key")
 
     # 4. dashboard subcommand
     dash_parser = subparsers.add_parser(
