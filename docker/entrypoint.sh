@@ -2,8 +2,8 @@
 # ---------------------------------------------------------------------------
 # LA Fat Segmentation — Docker Entrypoint
 # ---------------------------------------------------------------------------
-# 1. Writes the TotalSegmentator license config.
-# 2. Dispatches to pipeline (batch) or dashboard mode.
+# 1. Writes the TotalSegmentator license config if provided.
+# 2. Dispatches to `la-fat` CLI or serves QA Studio.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -31,38 +31,37 @@ else
     "statistics_disclaimer_shown": true
 }
 EOF
-    echo "[entrypoint] WARNING: No TOTALSEG_LICENSE provided — config written without license"
 fi
 
 # ── Resolve data / output directories ───────────────────────────────────────
 DATA_DIR="${DATA_DIR:-/workspace/data}"
 OUTPUT_DIR="${OUTPUT_DIR:-/workspace/outputs}"
-WORKSPACE="${WORKSPACE:-/workspace}"
 
-# Ensure workspace directories exist
 mkdir -p "${DATA_DIR}/raw"
 mkdir -p "${DATA_DIR}/intermediate"
 mkdir -p "${OUTPUT_DIR}"
 
-# ── Dispatch ────────────────────────────────────────────────────────────────
-MODE="${1:-pipeline}"
+MODE="${1:-batch}"
 
 case "${MODE}" in
-    pipeline)
-        echo "[entrypoint] Starting batch pipeline"
-        echo "[entrypoint] Data directory:  ${DATA_DIR}"
+    pipeline|batch)
+        echo "[entrypoint] Starting LA Fat batch pipeline"
+        echo "[entrypoint] Data directory:   ${DATA_DIR}"
         echo "[entrypoint] Output directory: ${OUTPUT_DIR}"
-        exec python -m la_fat.batch_pipeline \
+        exec la-fat batch \
             --data-dir "${DATA_DIR}" \
-            --output-dir "${OUTPUT_DIR}"
+            --output-dir "${OUTPUT_DIR}" \
+            --no-open
         ;;
     dashboard)
-        echo "[entrypoint] Serving QA Studio dashboard on port 5006"
+        echo "[entrypoint] Serving QA Studio on port 8080"
         echo "[entrypoint] Output directory: ${OUTPUT_DIR}"
-        exec python -m http.server 5006 --directory "${OUTPUT_DIR}" --bind 0.0.0.0
+        exec python -m http.server 8080 --directory "${OUTPUT_DIR}" --bind 0.0.0.0
+        ;;
+    check)
+        exec la-fat check
         ;;
     *)
-        echo "[entrypoint] ERROR: Unknown mode '${MODE}'. Valid modes: pipeline, dashboard" >&2
-        exit 1
+        exec la-fat "$@"
         ;;
 esac

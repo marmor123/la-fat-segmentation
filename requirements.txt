@@ -9,5 +9,3 @@ scikit-learn
 PyYAML
 nibabel
 pandas
-panel
-pyvista

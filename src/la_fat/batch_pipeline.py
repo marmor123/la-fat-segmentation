@@ -39,11 +39,15 @@ logger = logging.getLogger(__name__)
 def run_batch_pipeline(
     data_dir: str | None = None,
     output_dir: str | None = None,
+    input_dir: str | None = None,
+    patient_ids: list[str] | None = None,
     config: PipelineConfig | None = None,
     config_path: str | None = None,
     force_recompute: bool = False,
+    device: str = "auto",
+    fast: bool = False,
 ) -> dict:
-    """Run the fat extraction pipeline for all CT scans in ``data/raw/``.
+    """Run the fat extraction pipeline for all CT scans in a directory.
 
     Discovers ``.nii.gz`` and ``.nii`` files, derives canonical patient IDs,
     checks for existing results, processes new patients sequentially, and
@@ -55,12 +59,20 @@ def run_batch_pipeline(
         Path to data root (containing ``raw/`` subdirectory).
     output_dir:
         Path to output root.
+    input_dir:
+        Direct path to a folder containing CT NIfTI scans.
+    patient_ids:
+        Optional list of patient IDs to restrict processing to.
     config:
         Optional pre-built PipelineConfig.
     config_path:
         Optional path to YAML config file.
     force_recompute:
         Whether to re-process scans that already have existing results.
+    device:
+        Inference device for TotalSegmentator: ``"auto"``, ``"gpu"``, or ``"cpu"``.
+    fast:
+        Whether to run TotalSegmentator in fast mode.
 
     Returns
     -------
@@ -75,7 +87,7 @@ def run_batch_pipeline(
     else:
         cfg = PipelineConfig()
 
-    resolved_data_dir = data_dir or cfg.data_dir
+    resolved_data_dir = input_dir or data_dir or cfg.data_dir
     resolved_output_dir = output_dir or cfg.output_dir
 
     cfg = dataclasses.replace(
@@ -86,7 +98,7 @@ def run_batch_pipeline(
 
     ct_files = _discover_ct_files(resolved_data_dir)
     if not ct_files:
-        logger.info("No CT scans found in %s/raw/", resolved_data_dir)
+        logger.info("No CT scans found in %s", resolved_data_dir)
         _print_header(0)
         _print_summary(0, 0, 0, [])
         return {
@@ -98,18 +110,29 @@ def run_batch_pipeline(
             "cohort_dashboard_path": None,
         }
 
-    patient_ids = [extract_patient_id(f) for f in ct_files]
+    discovered_ids = [extract_patient_id(f) for f in ct_files]
+
+    # Filter to requested patient_ids if provided
+    if patient_ids:
+        filtered_files = []
+        filtered_ids = []
+        for f, pid in zip(ct_files, discovered_ids):
+            if pid in patient_ids:
+                filtered_files.append(f)
+                filtered_ids.append(pid)
+        ct_files = filtered_files
+        discovered_ids = filtered_ids
 
     # Separate new vs. completed
     new_patients: list[str] = []
     skipped: list[str] = []
-    for pid in patient_ids:
+    for pid in discovered_ids:
         if not force_recompute and _is_completed(resolved_output_dir, pid):
             skipped.append(pid)
         else:
             new_patients.append(pid)
 
-    total = len(patient_ids)
+    total = len(discovered_ids)
     to_process = len(new_patients)
 
     intermediate_dir = os.path.join(resolved_data_dir, cfg.intermediate_subdir)
@@ -133,13 +156,18 @@ def run_batch_pipeline(
                 pass
 
     for idx, pid in enumerate(new_patients, start=1):
-        ct_file = ct_files[patient_ids.index(pid)]
+        ct_file = ct_files[discovered_ids.index(pid)]
 
         # TS pre-compute if masks missing
         if not _masks_exist(intermediate_dir, pid):
             _print_ts_start(idx, to_process, pid)
             try:
-                ts_result = run_ts_precompute(ct_file, intermediate_dir, cfg)
+                if device != "auto" or fast:
+                    ts_result = run_ts_precompute(
+                        ct_file, intermediate_dir, cfg, device=device, fast=fast
+                    )
+                else:
+                    ts_result = run_ts_precompute(ct_file, intermediate_dir, cfg)
                 if ts_result.errors:
                     _print_ts_failed(ts_result.errors)
                     failed_count += 1
@@ -180,6 +208,7 @@ def run_batch_pipeline(
     if cohort_records:
         cohort_dashboard_path = os.path.join(resolved_output_dir, "cohort_qa_dashboard.html")
         try:
+            os.makedirs(resolved_output_dir, exist_ok=True)
             generate_cohort_qa_html(cohort_records, cohort_dashboard_path)
             logger.info("Compiled multi-patient cohort QA dashboard at: %s", cohort_dashboard_path)
         except Exception as exc:
@@ -188,6 +217,7 @@ def run_batch_pipeline(
     # Save Cohort Summary CSV
     if summary_rows:
         try:
+            os.makedirs(resolved_output_dir, exist_ok=True)
             csv_path = os.path.join(resolved_output_dir, "cohort_summary.csv")
             pd.DataFrame(summary_rows).to_csv(csv_path, index=False)
             logger.info("Saved cohort summary metrics to: %s", csv_path)

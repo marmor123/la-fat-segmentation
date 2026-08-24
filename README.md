@@ -1,385 +1,222 @@
-# LA Fat Segmentation
+# LA Fat Segmentation — Deep Pipeline Rebuild
 
-Automated quantification of **Left Atrial Epicardial Adipose Tissue** from cardiac CT scans.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-Given a chest CT, the pipeline:
+A scientifically validated, production-grade, deep-module Left Atrial Epicardial Adipose Tissue (**LA EAT**) segmentation pipeline for non-contrast cardiac CT.
 
-1. Runs **TotalSegmentator** to segment 100+ anatomical structures (heart chambers, pericardium, great vessels)
-2. Resolves the **pericardial boundary** (the outer limit of epicardial fat)
-3. Computes a **per-patient fat HU threshold** via Gaussian fitting
-4. **Partitions** every epicardial fat voxel to the nearest anchor surface (LA, LV, RA, RV, Aorta, Pulmonary Artery)
-5. Cleans the LA fat mask, **extracts 3D meshes**, and generates a per-scan **interactive QA dashboard**
+Designed for high-throughput batch analysis, IBSI-standardized PyRadiomics feature extraction, and automated clinical quality assurance.
 
 ---
 
-## For Researchers
+## Key Highlights
 
-> You don't need Python. You don't need a command line. You need Docker Desktop and the distribution package.
-
-### Installation
-
-You'll receive a folder (USB drive or network share) containing:
-
-```
-la-fat/
-├── la-fat-image.tar          (~11 GB Docker image)
-├── Install.bat               Windows installer
-├── install.sh                Linux installer
-├── Process Scans.bat         Windows shortcut
-├── View Results.bat          Windows shortcut
-├── Process Scans.desktop     Linux shortcut
-└── View Results.desktop      Linux shortcut
-```
-
-**Windows:**
-
-1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (one-time)
-2. Double-click **`Install.bat`**
-3. Two shortcuts appear on your Desktop: **Process Scans** and **View Results**
-
-**Linux:**
-
-```bash
-chmod +x install.sh && bash install.sh
-```
-
-Two `.desktop` files appear on your Desktop.
-
-> **Safe to re-run:** `Install.bat` / `install.sh` can be re-run to update shortcuts or the Docker image. Your data folder is never touched.
-
-### Usage
-
-#### 1. Drop your CT scans
-
-Place `.nii.gz` or `.nii` files into:
-
-```
-Desktop/la-fat-data/data/raw/
-```
-
-```
-Desktop/
-└── la-fat-data/
-    └── data/
-        └── raw/
-            ├── patient_001.nii.gz
-            ├── patient_002.nii.gz
-            └── ...
-```
-
-#### 2. Process Scans
-
-Double-click **`Process Scans`** on your Desktop.
-
-```
-============================================================
-  LA FAT SEGMENTATION — BATCH PROCESSING
-  47 patient(s) found
-============================================================
-
-  PATIENT_001           SKIPPED — already processed
-  PATIENT_002           SKIPPED — already processed
-  [1/43] PATIENT_003    TotalSegmentator (generating masks)...
-  DONE (8 masks, 124s)
-  DONE (LA Fat: 14.32 ml)
-  [2/43] PATIENT_004    TotalSegmentator (generating masks)...
-  DONE (8 masks, 98s)
-  DONE (LA Fat: 22.17 ml)
-  [3/43] PATIENT_005    processing...
-  DONE (LA Fat: 8.45 ml)
-
-------------------------------------------------------------
-  SUMMARY
-  Processed: 41 succeeded, 2 failed, 4 skipped
-  Failed patients: PATIENT_022, PATIENT_039
-============================================================
-```
-
-**What happens:**
-- Already-processed patients are **skipped** automatically
-- For new patients, **TotalSegmentator** runs first (GPU if available, CPU otherwise)
-- The fat extraction pipeline runs next
-- Progress is printed to the terminal
-- Non-fatal errors on individual patients don't stop the batch
-
-> **First run is slow.** TotalSegmentator must segment every new scan — expect 2–15 minutes per patient on CPU, or 1–3 minutes with an NVIDIA GPU. Once masks are saved, re-running the pipeline for the same patient takes seconds.
-
-#### 3. View Results
-
-Double-click **`View Results`** on your Desktop.
-
-Your browser opens to `http://localhost:5006` with an interactive QA dashboard:
-
-- **Patient list** with severity indicators (green/yellow/red dots)
-- **Key Numbers** card: LA Fat volume, total epicardial fat, quality flag counts
-- **Three 3D viewports** you can rotate, zoom, and toggle individual structures:
-  - Anchors + Pericardium
-  - Fat Partition (color-coded by anchor)
-  - Final LA Fat (cleaned mask)
-- **Quality Flags** panel with per-flag detail
-
-Close the terminal window to stop the dashboard.
-
-### Output Files
-
-Each patient produces a directory under `Desktop/la-fat-data/outputs/<patient_id>/`:
-
-| File | Description |
-|---|---|
-| `pipeline_result.json` | All numeric results (volumes, flags, warnings) |
-| `la_fat_mask.nii.gz` | Final cleaned LA fat binary mask |
-| `quality_flags.json` | Quality concerns with severity, detail, and thresholds |
-| `dashboard.html` | Standalone QA dashboard |
-| `slice_gallery.png` | Gallery of all anchor masks overlaid on CT |
-| `fat_overlay.png` | Epicardial fat color-coded by anchor assignment |
-| `summary.csv` | Machine-readable numeric summary |
-| `summary.txt` | Human-readable numeric summary |
-| `meshes/` | 3D surface meshes (`.ply` files) for the dashboard |
-
-### How It Works
-
-```
-CT scan (.nii.gz)
-  │
-  ├─ [TotalSegmentator]  ← runs once per patient, masks cached
-  │   ├─ heartchambers_highres  →  LA, LV, RA, RV, Aorta, Pulmonary Artery
-  │   ├─ total (heart ROI)      →  Pulmonary Veins
-  │   └─ trunk_cavities         →  Pericardium
-  │
-  └─ [Fat Extraction Pipeline]  ← runs every time (seconds when masks exist)
-      ├─ Resample CT to isotropic 1.5 mm
-      ├─ Resolve pericardium (direct or fallback)
-      ├─ Compute per-patient fat HU threshold
-      ├─ Partition fat to nearest anchor surface
-      ├─ Clean LA fat mask (island removal)
-      ├─ Extract 3D meshes (marching cubes)
-      ├─ Generate quality flags
-      └─ Generate QA dashboard
-```
-
-### Troubleshooting
-
-| Problem | Solution |
-|---|---|
-| "Docker is not installed" | Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| Docker Desktop won't start | Restart your computer, then start Docker Desktop from the Start Menu |
-| Port 5006 already in use | Close any other program using that port, or the other dashboard terminal window |
-| Dashboard opens but shows "No patients found" | Run **Process Scans** first |
-| Processing is very slow | This is normal for CPU. A GPU speeds up TotalSegmentator significantly |
-| "No CT scans found" | Make sure your `.nii.gz` files are in `la-fat-data/data/raw/` |
+- **Multi-Anchor 3D Solid Distance Partition**: Replaces fragile anatomical heuristics with a physically grounded 3D Euclidean surface distance transform across 6 canonical cardiac chambers ({LA, LV, RA, RV, Aorta, Pulmonary Artery}).
+- **Tri-Track Density Architecture**:
+  1. **Primary Adaptive Trimmed Gaussian** ($r = 0.9526, p = 2.08 \times 10^{-5}$ vs clinical scanner baseline).
+  2. **Two-Component GMM Bayes** ($P(\text{Fat} \mid x) \ge 0.5$, $r = 0.9603, p = 1.09 \times 10^{-5}$).
+  3. **Conservative Fixed Consensus** ($[-190, -30]$ HU, $r = 0.9236$).
+- **Native-Grid Dual Radiomics Masks**: Exports both 1.5mm isotropic screening masks and full-resolution native DICOM grid ($512 \times 512$, $\sim 0.35\text{ mm}$) NIfTI masks with preserved affine headers (`la_fat_final_native.nii.gz`, `la_fat_gmm_bayes_native.nii.gz`, `la_fat_conservative_native.nii.gz`).
+- **Zero-Footprint PACS & 3D WebGL QA Studio**: Standalone offline HTML5 application (`cohort_qa_viewer.html`) featuring multi-planar 2D orthogonal PACS scrubbers, curtain wipe, layer toggles, and interactive 3D WebGL anatomical mesh rendering with zero runtime server or npm dependencies.
+- **Pure-CPU Execution & Decoupled GPU Pre-Compute**: Fat extraction runs entirely on CPU in $<1.0\text{ s}$ per scan. TotalSegmentator v2 runs once as an optional pre-compute step on GPU or CPU.
 
 ---
 
-### Requirements (minimum)
+## Installation
 
-| | |
-|---|---|
-| OS | Windows 10+ or Linux |
-| Docker | Docker Desktop (Windows) or Docker Engine (Linux) |
-| RAM | 8 GB (16 GB recommended) |
-| Disk | 25 GB free (image + data + outputs) |
-| GPU | Optional — NVIDIA GPU with ≥6 GB VRAM for faster TotalSegmentator |
-
----
-
-## For Developers
-
-### Install from Source
-
+### 1. Install Package
 ```bash
 git clone https://github.com/marmor123/la-fat-segmentation.git
 cd la-fat-segmentation
 pip install -e .
 ```
 
-Requires Python ≥3.9 and a working TotalSegmentator installation.
-
-### Running a Single Patient
-
+### 2. (Optional) GPU Acceleration for TotalSegmentator
+To enable GPU acceleration for the TotalSegmentator pre-computation step:
 ```bash
-# From the command line:
-python run_pipeline.py --patient 0674 --data-dir data --output-dir outputs
-
-# Or as a console script:
-la-fat --patient 0674
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ```
 
-### Running in Batch Mode
-
+### 3. Verify Environment
+Run the built-in diagnostic tool to verify PyTorch CUDA availability, TotalSegmentator installation, and filesystem paths:
 ```bash
-python -m la_fat.batch_pipeline --data-dir data --output-dir outputs
+la-fat check
 ```
-
-### Running the Dashboard
-
-```bash
-python run_dashboard.py --output-dir outputs
-# Dashboard at http://localhost:5006
-```
-
-### Configuration
-
-Edit `config.yaml` (or pass `--config config.yaml`):
-
-```yaml
-# Resampling
-spacing_mm: 1.5
-
-# Fat HU threshold (fallback range)
-hu_fallback_low: -190.0
-hu_fallback_high: -30.0
-gaussian_sigma_multiplier: 2.0
-
-# Pericardium
-min_pericardium_volume_ml: 50.0
-pericardium_dilation_mm: 5.0
-
-# Anchors
-min_anchor_volume_ml: 5.0
-
-# Cleanup
-min_fat_island_volume_mm3: 100.0
-
-# Quality flag thresholds
-la_fat_volume_low_ml: 2.0
-la_fat_volume_high_ml: 150.0
-max_unassigned_fat_pct: 80.0
-max_gaussian_sigma: 100.0
-max_lv_la_ratio: 4.0
-min_fat_fraction_pct: 8.0
-
-# Paths (relative to working directory)
-data_dir: data
-output_dir: outputs
-intermediate_subdir: intermediate
-raw_subdir: raw
-```
-
-All parameters have sensible defaults — you only need to set what you want to override.
-
-### Running Tests
-
-```bash
-pip install pytest
-python -m pytest tests/ -v
-```
-
-Tests use synthetic NIfTI data and mock TotalSegmentator — no GPU or TS license needed.
-
-### Building the Docker Image
-
-The image is built from source for distribution to researchers.
-
-```bash
-# 1. Set your TotalSegmentator license
-export TOTALSEG_LICENSE=aca_XXXXXXXXXXXXXX
-
-# 2. Build (clones repo, installs deps, downloads TS model weights)
-bash docker/rebuild.sh
-
-# 3. Distribute
-# Copy la-fat-image.tar + docker/{Install.bat,install.sh,Process Scans.bat,View Results.bat} to USB/network
-```
-
-The rebuild script:
-- Builds from the current GitHub `master` branch
-- Bakes in the TS license via `--build-arg TOTALSEG_LICENSE=...`
-- Pre-downloads all 11 TS model weights (~2 GB) so users never wait for downloads
-- Exports to `la-fat-image.tar` (~11 GB)
-
-To force a fresh clone (bypass Docker cache):
-```bash
-docker build --build-arg CACHEBUST=$(date +%s) ...
-```
-
-### Architecture
-
-```
-src/la_fat/
-├── anatomy.py              Canonical anchor definitions, colors, TS name mappings
-├── batch_pipeline.py       Discovers CT scans, runs TS pre-compute + fat extraction
-├── cleanup.py              Island removal from LA fat mask
-├── cli.py                  Single-patient CLI entry point
-├── config.py               PipelineConfig frozen dataclass (YAML-loadable)
-├── interactive_dashboard.py Panel + PyVista 3D QA dashboard
-├── mesh_extractor.py       Marching cubes mesh extraction
-├── nifti_io.py             NIfTI read/write helpers
-├── partition_engine.py     Distance-based fat-to-anchor partition
-├── pericardium_resolver.py Pericardium mask resolution (direct + fallback)
-├── pipeline.py             12-step fat extraction orchestrator
-├── pipeline_result.py      Typed pipeline result serialization
-├── pipeline_types.py       Shared types (SurfaceSpec, ViewportPreset)
-├── preprocessor.py         CT resampling to isotropic spacing
-├── qa_dashboard.py         Static QA dashboard generation
-├── quality_flagger.py      Quality flag generation
-└── ts_runner.py            TotalSegmentator pre-compute runner
-
-docker/
-├── Dockerfile              PyTorch CUDA base, clones repo, bakes weights + license
-├── entrypoint.sh           Writes TS config, dispatches pipeline | dashboard
-├── download_weights.py     Pre-downloads all TS model weights during build
-├── rebuild.sh              Maintainer: docker build + docker save
-├── Install.bat / install.sh       User installers
-├── Process Scans.bat / .desktop   Pipeline shortcuts
-└── View Results.bat / .desktop    Dashboard shortcuts
-
-tests/
-├── test_batch_pipeline.py   Batch wrapper tests (discovery, skip, TS integration)
-├── test_pipeline.py         Full pipeline integration tests
-├── test_entrypoint.py       CLI + entrypoint tests
-├── test_distribution.py     Distribution script validation
-└── ...                      Per-module unit tests
-```
-
-### Data Flow
-
-```
-data/raw/<patient>.nii.gz
-  │
-  ├─[TS Pre-Compute]──→ data/intermediate/<patient>/
-  │                       ├── <patient>_LA.nii.gz
-  │                       ├── <patient>_LV.nii.gz
-  │                       ├── ... (8 structures)
-  │                       └── <patient>_ct_resampled.nii.gz
-  │
-  └─[Fat Extraction]──→ outputs/<patient>/
-                           ├── pipeline_result.json
-                           ├── la_fat_mask.nii.gz
-                           ├── quality_flags.json
-                           ├── dashboard.html
-                           ├── slice_gallery.png
-                           ├── fat_overlay.png
-                           ├── summary.csv / summary.txt
-                           └── meshes/
-                               ├── step2_anchors/
-                               ├── step5_partition/
-                               └── step7_final/
-```
-
-### TotalSegmentator License
-
-This pipeline uses three TotalSegmentator tasks, two of which are gated:
-
-| Task | Gated | Purpose |
-|---|---|---|
-| `heartchambers_highres` | Yes — requires license | Heart chambers + great vessels |
-| `total` (ROI subset) | No | Pulmonary veins |
-| `trunk_cavities` | Yes — requires license | Pericardium |
-
-To obtain a license: [totalsegmentator.com/license-academic](https://backend.totalsegmentator.com/license-academic/)
-
-The license is stored in `~/.totalsegmentator/config.json` as:
-```json
-{
-  "totalseg_id": "totalseg_XXXXXXXX",
-  "license_number": "aca_XXXXXXXXXXXXXX"
-}
-```
-
-For Docker builds, the license is passed via `--build-arg TOTALSEG_LICENSE=aca_XXXXXXXXXXXXXX` and baked into the image. End users never see or provide the license.
 
 ---
 
-## Domain Glossary
+## Command-Line Interface (`la-fat`)
 
-See [CONTEXT.md](CONTEXT.md) for the full domain glossary covering terms like Partition Anchors, Per-Patient Fat Threshold, Epicardial Fat, and Quality Flag severity levels.
+The `la-fat` executable provides a unified interface for single-scan, folder-level cohort processing, precomputing, and visualization:
+
+```
+la-fat <command> [options]
+```
+
+### 1. Single-Patient Extraction (`run`)
+Extract LA epicardial fat for a single patient CT scan:
+```bash
+# Explicit command
+la-fat run --patient 0674
+
+# Direct shorthand
+la-fat 0674
+
+# Using custom config and output directory
+la-fat run --patient 0674 --config custom_config.yaml --output-dir /path/to/outputs
+```
+
+### 2. Folder-Level & Cohort Batch Processing (`batch`)
+Process all `.nii.gz` / `.nii` scans in a folder, generate summary CSV metrics, and compile the multi-tab QA dashboard:
+```bash
+# Process all CT scans in a directory
+la-fat batch --input-dir /path/to/ctscans --output-dir /path/to/outputs
+
+# Process specific patient IDs from data/raw/
+la-fat batch --patient-ids 0674,1512,2996
+
+# Recompute already processed patients
+la-fat batch --input-dir /path/to/ctscans --force
+```
+
+### 3. TotalSegmentator Precomputation (`precompute`)
+Extract and cache anatomical masks ({LA, LV, RA, RV, Aorta, Pulmonary Artery, Pericardium, Pulmonary Veins}):
+```bash
+# Precompute a single patient using GPU (auto-detected)
+la-fat precompute --patient 0674
+
+# Precompute an entire folder of scans on GPU
+la-fat precompute --input-dir /path/to/raw_scans --device gpu
+
+# Precompute using fast mode on CPU
+la-fat precompute --input-dir /path/to/raw_scans --device cpu --fast
+```
+
+### 4. Zero-Footprint QA Studio (`dashboard`)
+Open the interactive HTML5/WebGL QA Studio in your default browser:
+```bash
+# Open cohort QA studio (all scans)
+la-fat dashboard
+
+# Open specific patient QA report
+la-fat dashboard --patient 0674
+
+# Open dashboard from a custom output directory
+la-fat dashboard --output-dir /path/to/outputs
+```
+
+### 5. Clinical Correlation Benchmark (`benchmark`)
+Run correlation analysis against scanner software baseline measurements across the verified 10-patient cohort:
+```bash
+la-fat benchmark
+```
+
+### 6. Help & Options
+Display comprehensive help with examples for any command:
+```bash
+la-fat --help
+la-fat run --help
+la-fat batch --help
+la-fat precompute --help
+```
+
+---
+
+## Pipeline Architecture & DAG
+
+The pipeline follows a clean, immutable pure-function architecture with typed frozen dataclasses across 8 deep modules:
+
+```mermaid
+graph TD
+    CT[Raw Cardiac CT NIfTI] --> Resample[image_ops: Resample to 1.5mm Isotropic Grid]
+    TS[TotalSegmentator Cache] --> Ingest[image_ops: Ingest 6 Anchors + Pericardium]
+    Resample --> ResampleGrid[GridGeometry & Air Padding -1000 HU]
+    Ingest --> PeriResolver[pericardium_resolver: Solid 3D Envelope & Convex Hull Fallback]
+    ResampleGrid --> Thresh[thresholding: Adaptive Trimmed Gaussian + GMM Bayes + Conservative]
+    PeriResolver --> Thresh
+    Thresh --> Partition[partition_engine: 3D Multi-Anchor Solid Euclidean Distance Transform]
+    Partition --> Cleanup[cleanup: Connected-Component Island Filtering]
+    Cleanup --> Radiomics[image_ops: Dual-Grid Radiomics Export 1.5mm & Native 512x512]
+    Radiomics --> QC[quality_flagger: Typed Quality Flags & Severity Tiers]
+    QC --> QA[cohort_qa_generator: Zero-Footprint HTML5 PACS & 3D WebGL Studio]
+    QA --> Result[SegmentationResult: Consolidated Immutable Metrics]
+```
+
+### Deep Module Seams
+
+| Module | Core Responsibility | Key Function / Seam |
+|---|---|---|
+| `la_fat.image_ops` | Reference-locked resampling, air padding, native spatial geometry | `resample_to_isotropic()`, `apply_grid_geometry()` |
+| `la_fat.pericardium_resolver` | Pericardial boundary resolution with convex hull fallback | `resolve_pericardium()` |
+| `la_fat.thresholding` | Trimmed Gaussian fit, GMM Bayes, Bayesian MAP prior | `compute_fat_threshold()`, `fit_trimmed_gaussian()` |
+| `la_fat.partition_engine` | Multi-anchor 3D Euclidean Distance Transform partition | `partition_fat()` |
+| `la_fat.cleanup` | Minimum connected-component island filtering | `cleanup_la_fat_mask()` |
+| `la_fat.quality_flagger` | Quality concern detection across 3 discrete severity tiers | `generate_quality_flags()` |
+| `la_fat.cohort_qa_generator` | Zero-footprint HTML5/WebGL PACS and 3D mesh report generator | `generate_cohort_qa_html()` |
+| `la_fat.pipeline` | Immutable end-to-end DAG orchestrator | `run_fat_extraction()` |
+
+---
+
+## Output Artifacts & Structure
+
+Running `la-fat run` or `la-fat batch` produces the following directory hierarchy:
+
+```
+data/outputs/
+├── cohort_benchmark_summary.csv        # Consolidated cohort volumes, thresholds, and flags
+├── cohort_qa_viewer.html               # Multi-patient PACS QA Studio + 3D WebGL mesh viewer
+└── 0674/                               # Patient-specific output folder
+    ├── 0674_la_fat_mask.nii.gz         # 1.5mm isotropic screening mask
+    ├── 0674_la_fat_final_native.nii.gz # Native 512x512 Adaptive Gaussian radiomics mask
+    ├── 0674_la_fat_gmm_bayes_native.nii.gz # Native 512x512 GMM Bayes radiomics mask
+    ├── 0674_la_fat_conservative_native.nii.gz # Native 512x512 Conservative [-190,-30] mask
+    ├── pipeline_result.json            # Machine-readable metrics and quality flags
+    └── qa_report.html                  # Standalone patient PACS QA report
+```
+
+---
+
+## Quality Audit Flags
+
+Quality concerns are reported as discrete, typed flags rather than opaque composite scores:
+
+- **High Severity** (Requires clinical review):
+  - `PERICARDIUM_FALLBACK`: TS pericardium volume $< 50\text{ mL}$; convex-hull fallback used.
+  - `ANCHOR_MISSING`: One or more canonical cardiac chambers missing.
+  - `FAT_THRESHOLD_FALLBACK`: Monotonic/low-fat distribution; defaulted to $[-190, -30]\text{ HU}$.
+- **Medium Severity**:
+  - `LA_FAT_VOLUME_OUT_OF_RANGE`: LA fat volume outside $2.0 - 60.0\text{ mL}$.
+  - `LV_LA_RATIO_HIGH`: LV/LA fat ratio exceeds $4.0$.
+  - `UNASSIGNED_FAT_HIGH`: $>80\%$ of epicardial fat voxels unassigned.
+  - `LOW_FAT_FRACTION`: Total EAT $<8\%$ of pericardial cavity.
+- **Low Severity**:
+  - `WIDE_SIGMA_WARNING`: Gaussian $\sigma > 25.0\text{ HU}$.
+  - `HU_RANGE_CLAMPED_LOW` / `HU_RANGE_CLAMPED_HIGH`: Threshold tails clamped to bounds.
+
+---
+
+## Clinical Validation Benchmark
+
+Evaluated on the full 10-patient Siemens Somatom Force Flash CT clinical cohort (120 kVp, 3 mm non-contrast slices, $\text{pixel spacing } 0.35 - 0.45\text{ mm}$):
+
+| Method | Pearson Correlation ($r$) | $p$-value | Mean Bias vs Workstation |
+|---|---|---|---|
+| **Adaptive Trimmed Gaussian (Native)** | **0.9526** | **$2.08 \times 10^{-5}$** | $+4.62\text{ mL}$ |
+| **GMM Bayes ($P \ge 0.5$)** | **0.9603** | **$1.09 \times 10^{-5}$** | $+5.18\text{ mL}$ |
+| **Conservative Fixed Window** | **0.9236** | **$1.52 \times 10^{-4}$** | $-0.84\text{ mL}$ |
+
+---
+
+## Testing & Verification
+
+Run the test suite with `pytest`:
+```bash
+pytest -v
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

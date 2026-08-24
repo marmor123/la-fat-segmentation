@@ -195,11 +195,11 @@ class TestEntrypointSyntax:
         )
 
     def test_entrypoint_has_pipeline_mode(self):
-        """The entrypoint.sh contains a pipeline dispatch case."""
+        """The entrypoint.sh contains a pipeline/batch dispatch case."""
         with open(ENTRYPOINT_PATH) as f:
             content = f.read()
-        assert "pipeline" in content
-        assert "batch_pipeline" in content
+        assert "pipeline" in content or "batch" in content
+        assert "la-fat" in content
 
     def test_entrypoint_has_dashboard_mode(self):
         """The entrypoint.sh contains a dashboard dispatch case."""

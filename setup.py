@@ -2,7 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="la_fat",
-    version="0.1.0",
+    version="0.2.0",
+    description="LA Fat Segmentation — Deep-Module Epicardial Adipose Tissue Analysis Pipeline",
+    author="LA Fat Segmentation Contributors",
     packages=find_packages("src"),
     package_dir={"": "src"},
     install_requires=[
@@ -17,13 +19,11 @@ setup(
         "PyYAML",
         "nibabel",
         "pandas",
-        "panel",
-        "pyvista",
     ],
     python_requires=">=3.9",
     entry_points={
         "console_scripts": [
-            "la-fat=la_fat.pipeline:main_cli",
+            "la-fat=la_fat.cli:main_cli",
         ],
     },
 )

@@ -362,6 +362,8 @@ def run_ts_precompute(
     ct_path: str,
     output_dir: str,
     config: PipelineConfig,
+    device: str = "auto",
+    fast: bool = False,
 ) -> TsPrecomputeResult:
     """Run TotalSegmentator on a raw CT scan and save resampled masks.
 
@@ -390,6 +392,10 @@ def run_ts_precompute(
         ``PipelineConfig``).
     config:
         Pipeline configuration; primarily used for ``spacing_mm``.
+    device:
+        Inference device: ``"auto"`` (default), ``"gpu"``, ``"cuda"``, or ``"cpu"``.
+    fast:
+        Whether to run TS models in fast mode where supported.
 
     Returns
     -------
@@ -406,9 +412,18 @@ def run_ts_precompute(
     ts_raw_dir = os.path.join(patient_out_dir, "_ts_raw")
     os.makedirs(ts_raw_dir, exist_ok=True)
 
+    # Resolve device
+    resolved_device = device
+    if resolved_device == "auto":
+        try:
+            import torch
+            resolved_device = "gpu" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            resolved_device = "cpu"
+
     # ---- Step 3: run TS (possibly multiple models) ------------------------
     logger.info(
-        "TS pre-compute for %s (output: %s)", patient_id, patient_out_dir
+        "TS pre-compute for %s (device=%s, output=%s)", patient_id, resolved_device, patient_out_dir
     )
 
     # Check whether the Python API is available.
@@ -419,22 +434,26 @@ def run_ts_precompute(
         _use_api = False
 
     for idx, run_kwargs in enumerate(_TS_RUNS):
-        run_label = run_kwargs.get("task", "total")
+        kwargs = dict(run_kwargs)
+        if fast and "task" in kwargs and kwargs["task"] != "trunk_cavities":
+            kwargs["fast"] = True
+        kwargs["device"] = resolved_device
+        run_label = kwargs.get("task", "total")
         run_raw_dir = os.path.join(ts_raw_dir, f"_run{idx:02d}")
         os.makedirs(run_raw_dir, exist_ok=True)
 
         logger.info(
-            "TS run %d/%d (task=%s)", idx + 1, len(_TS_RUNS), run_label
+            "TS run %d/%d (task=%s, device=%s)", idx + 1, len(_TS_RUNS), run_label, resolved_device
         )
         try:
             if _use_api:
-                _run_totalsegmentator(ct_path, run_raw_dir, **run_kwargs)
+                _run_totalsegmentator(ct_path, run_raw_dir, **kwargs)
             else:
                 _run_ts_cli(
                     ct_path,
                     run_raw_dir,
-                    task=str(run_kwargs.get("task", "total")),
-                    roi_subset=run_kwargs.get("roi_subset", None),  # type: ignore[arg-type]
+                    task=str(kwargs.get("task", "total")),
+                    roi_subset=kwargs.get("roi_subset", None),  # type: ignore[arg-type]
                 )
         except Exception as exc:
             logger.error(
