@@ -515,7 +515,7 @@ class TestQAStudioAndDualGridExport:
     """Tests for QA Studio HTML generation and dual-grid radiomics export."""
 
     def test_dual_grid_masks_saved(self, tmp_path):
-        """Pipeline exports both 1.5mm isotropic and native grid masks."""
+        """Pipeline exports native grid and legacy compatibility masks."""
         patient_id = "DUALGRID"
         data_dir = str(tmp_path / "data")
         output_dir = str(tmp_path / "outputs")
@@ -527,11 +527,12 @@ class TestQAStudioAndDualGridExport:
         assert result.success, f"Pipeline failed: {result.errors}"
         patient_out = os.path.join(output_dir, patient_id)
 
-        # 1.5mm mask
-        assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_1.5mm.nii.gz"))
+        # Native and legacy masks
         assert os.path.isfile(os.path.join(patient_out, "la_fat_mask.nii.gz"))
-        # Native grid mask
         assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_native.nii.gz"))
+        assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_final_native.nii.gz"))
+        assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_conservative_native.nii.gz"))
+        assert os.path.isfile(os.path.join(patient_out, f"{patient_id}_la_fat_gmm_bayes_native.nii.gz"))
 
     def test_qa_studio_html_generated(self, tmp_path):
         """Pipeline generates standalone zero-dependency HTML5 QA Studio report."""

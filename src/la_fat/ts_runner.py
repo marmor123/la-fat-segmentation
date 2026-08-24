@@ -344,14 +344,17 @@ def _resample_mask_to_isotropic(
     return resampler.Execute(image)
 
 
-def _compute_volume_ml(mask: sitk.Image, spacing_mm: float) -> float:
+def _compute_volume_ml(mask: sitk.Image, spacing: tuple[float, float, float] | float) -> float:
     """Compute the volume of a binary mask in millilitres.
 
     Volume (ml) = voxel_count × voxel_volume_mm³ / 1000.
     """
     array: np.ndarray = sitk.GetArrayFromImage(mask)
     voxel_count = int(np.count_nonzero(array))
-    voxel_volume_mm3 = spacing_mm ** 3
+    if isinstance(spacing, (int, float)):
+        voxel_volume_mm3 = float(spacing) ** 3
+    else:
+        voxel_volume_mm3 = float(spacing[0] * spacing[1] * spacing[2])
     return float(voxel_count * voxel_volume_mm3 / 1000.0)
 
 
@@ -489,15 +492,22 @@ def run_ts_precompute(
         logger.info("Processing %s  ← %s", domain_name, ts_mask_path)
 
         try:
-            resampled = _resample_mask_to_isotropic(ts_mask_path, config.spacing_mm)
-
-            out_path = os.path.join(
-                patient_out_dir,
-                f"{patient_id}_{domain_name}.nii.gz",
-            )
-            sitk.WriteImage(resampled, out_path)
-
-            volume_ml = _compute_volume_ml(resampled, config.spacing_mm)
+            if getattr(config, "use_native_resolution", False) or config.spacing_mm is None:
+                mask_img = sitk.ReadImage(ts_mask_path)
+                out_path = os.path.join(
+                    patient_out_dir,
+                    f"{patient_id}_{domain_name}.nii.gz",
+                )
+                sitk.WriteImage(mask_img, out_path)
+                volume_ml = _compute_volume_ml(mask_img, mask_img.GetSpacing())
+            else:
+                resampled = _resample_mask_to_isotropic(ts_mask_path, config.spacing_mm)
+                out_path = os.path.join(
+                    patient_out_dir,
+                    f"{patient_id}_{domain_name}.nii.gz",
+                )
+                sitk.WriteImage(resampled, out_path)
+                volume_ml = _compute_volume_ml(resampled, config.spacing_mm)
 
             masks_saved[domain_name] = out_path
             mask_volumes_ml[domain_name] = volume_ml

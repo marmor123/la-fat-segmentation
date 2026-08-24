@@ -12,7 +12,7 @@ import dataclasses
 import typing as t
 
 import numpy as np
-from scipy.ndimage import binary_dilation
+from scipy.ndimage import binary_dilation, distance_transform_edt
 from scipy.spatial import ConvexHull
 
 from la_fat.anatomy import voxel_volume_ml
@@ -158,10 +158,10 @@ def resolve_pericardium(
             shape[1], shape[2]
         )
 
-    # Dilate the hull by the configured margin.
-    dilation_voxels = config.pericardium_dilation_mm / spacing[0]
-    se = _ball_structure(dilation_voxels)
-    dilated = binary_dilation(hull_mask, structure=se)
+    # Dilate the hull by the configured physical margin (in mm), correctly accounting for anisotropic spacing
+    sampling_zyx = (float(spacing[2]), float(spacing[1]), float(spacing[0]))
+    dist_from_hull = distance_transform_edt(~hull_mask, sampling=sampling_zyx)
+    dilated = dist_from_hull <= config.pericardium_dilation_mm
 
     # Build the reason string.
     fallback_reason = reason

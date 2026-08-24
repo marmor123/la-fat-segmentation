@@ -14,7 +14,8 @@ import yaml
 
 # Type map for validation: field_name -> expected type
 _FIELD_TYPES: dict[str, t.Any] = {
-    "spacing_mm": (float, int),
+    "use_native_resolution": bool,
+    "spacing_mm": (float, int, type(None)),
     "fat_hu_low": (float, int),
     "fat_hu_high": (float, int),
     "fat_clamping_max_hu": (float, int),
@@ -48,8 +49,9 @@ class PipelineConfig:
     defaults.
     """
 
-    # --- Resampling -----------------------------------------------------------
-    spacing_mm: float = 1.5
+    # --- Resampling / Grid Resolution ----------------------------------------
+    use_native_resolution: bool = True
+    spacing_mm: float | None = 1.5
 
     # --- HU / fat-threshold --------------------------------------------------
     fat_hu_low: float = -190.0

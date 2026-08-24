@@ -17,9 +17,9 @@ Designed for high-throughput batch analysis, IBSI-standardized PyRadiomics featu
   1. **Primary Adaptive Trimmed Gaussian** ($r = 0.9526, p = 2.08 \times 10^{-5}$ vs clinical scanner baseline).
   2. **Two-Component GMM Bayes** ($P(\text{Fat} \mid x) \ge 0.5$, $r = 0.9603, p = 1.09 \times 10^{-5}$).
   3. **Conservative Fixed Consensus** ($[-190, -30]$ HU, $r = 0.9236$).
-- **Native-Grid Dual Radiomics Masks**: Exports both 1.5mm isotropic screening masks and full-resolution native DICOM grid ($512 \times 512$, $\sim 0.35\text{ mm}$) NIfTI masks with preserved affine headers (`la_fat_final_native.nii.gz`, `la_fat_gmm_bayes_native.nii.gz`, `la_fat_conservative_native.nii.gz`).
+- **Full-Resolution Native DICOM Grid Radiomics**: Operates directly on native CT resolution ($512 \times 512 \times Z$, $\sim 0.28\text{–}0.35\text{ mm}$ in-plane) with zero downsampling or upsampling artifacts, exporting lossless radiomics masks (`la_fat_final_native.nii.gz`, `la_fat_gmm_bayes_native.nii.gz`, `la_fat_conservative_native.nii.gz`).
 - **Zero-Footprint PACS & 3D WebGL QA Studio**: Standalone offline HTML5 application (`cohort_qa_viewer.html`) featuring multi-planar 2D orthogonal PACS scrubbers, curtain wipe, layer toggles, and interactive 3D WebGL anatomical mesh rendering with zero runtime server or npm dependencies.
-- **Pure-CPU Execution & Decoupled GPU Pre-Compute**: Fat extraction runs entirely on CPU in $<1.0\text{ s}$ per scan. TotalSegmentator v2 runs once as an optional pre-compute step on GPU or CPU.
+- **Pure-CPU Execution & Decoupled GPU Pre-Compute**: Fat extraction runs entirely on CPU per scan. TotalSegmentator v2 runs once as an optional pre-compute step on GPU or CPU.
 
 ---
 
@@ -129,15 +129,15 @@ The pipeline follows a clean, immutable pure-function architecture with typed fr
 
 ```mermaid
 graph TD
-    CT[Raw Cardiac CT NIfTI] --> Resample[image_ops: Resample to 1.5mm Isotropic Grid]
-    TS[TotalSegmentator Cache] --> Ingest[image_ops: Ingest 6 Anchors + Pericardium]
-    Resample --> ResampleGrid[GridGeometry & Air Padding -1000 HU]
-    Ingest --> PeriResolver[pericardium_resolver: Solid 3D Envelope & Convex Hull Fallback]
-    ResampleGrid --> Thresh[thresholding: Adaptive Trimmed Gaussian + GMM Bayes + Conservative]
+    CT[Raw Cardiac CT NIfTI] --> IngestCT[image_ops: Ingest Native 3D GridGeometry 512x512xZ]
+    TS[TotalSegmentator Cache] --> IngestMasks[image_ops: Align 6 Anchors + Pericardium to Native Grid]
+    IngestCT --> PeriResolver[pericardium_resolver: Solid 3D Envelope & Metric Convex Hull]
+    IngestMasks --> PeriResolver
+    IngestCT --> Thresh[thresholding: Adaptive Trimmed Gaussian + GMM Bayes + Conservative]
     PeriResolver --> Thresh
     Thresh --> Partition[partition_engine: 3D Multi-Anchor Solid Euclidean Distance Transform]
     Partition --> Cleanup[cleanup: Connected-Component Island Filtering]
-    Cleanup --> Radiomics[image_ops: Dual-Grid Radiomics Export 1.5mm & Native 512x512]
+    Cleanup --> Radiomics[image_ops: Native Tri-Track Radiomics Export 512x512]
     Radiomics --> QC[quality_flagger: Typed Quality Flags & Severity Tiers]
     QC --> QA[cohort_qa_generator: Zero-Footprint HTML5 PACS & 3D WebGL Studio]
     QA --> Result[SegmentationResult: Consolidated Immutable Metrics]
@@ -147,8 +147,8 @@ graph TD
 
 | Module | Core Responsibility | Key Function / Seam |
 |---|---|---|
-| `la_fat.image_ops` | Reference-locked resampling, air padding, native spatial geometry | `resample_to_isotropic()`, `apply_grid_geometry()` |
-| `la_fat.pericardium_resolver` | Pericardial boundary resolution with convex hull fallback | `resolve_pericardium()` |
+| `la_fat.image_ops` | Native spatial geometry, affine preservation, reference-locked alignment | `GridGeometry`, `resample_to_reference()` |
+| `la_fat.pericardium_resolver` | Pericardial boundary resolution with metric convex hull fallback | `resolve_pericardium()` |
 | `la_fat.thresholding` | Trimmed Gaussian fit, GMM Bayes, Bayesian MAP prior | `compute_fat_threshold()`, `fit_trimmed_gaussian()` |
 | `la_fat.partition_engine` | Multi-anchor 3D Euclidean Distance Transform partition | `partition_fat()` |
 | `la_fat.cleanup` | Minimum connected-component island filtering | `cleanup_la_fat_mask()` |
@@ -167,10 +167,10 @@ data/outputs/
 ├── cohort_benchmark_summary.csv        # Consolidated cohort volumes, thresholds, and flags
 ├── cohort_qa_viewer.html               # Multi-patient PACS QA Studio + 3D WebGL mesh viewer
 └── 0674/                               # Patient-specific output folder
-    ├── 0674_la_fat_mask.nii.gz         # 1.5mm isotropic screening mask
     ├── 0674_la_fat_final_native.nii.gz # Native 512x512 Adaptive Gaussian radiomics mask
     ├── 0674_la_fat_gmm_bayes_native.nii.gz # Native 512x512 GMM Bayes radiomics mask
     ├── 0674_la_fat_conservative_native.nii.gz # Native 512x512 Conservative [-190,-30] mask
+    ├── la_fat_mask.nii.gz              # Primary native LA fat segmentation
     ├── pipeline_result.json            # Machine-readable metrics and quality flags
     └── qa_report.html                  # Standalone patient PACS QA report
 ```
@@ -198,13 +198,13 @@ Quality concerns are reported as discrete, typed flags rather than opaque compos
 
 ## Clinical Validation Benchmark
 
-Evaluated on the full 10-patient Siemens Somatom Force Flash CT clinical cohort (120 kVp, 3 mm non-contrast slices, $\text{pixel spacing } 0.35 - 0.45\text{ mm}$):
+Evaluated on the full 10-patient Siemens Somatom Force Flash CT clinical cohort (120 kVp, non-contrast slices, native in-plane pixel spacing $0.28 - 0.36\text{ mm}$):
 
-| Method | Pearson Correlation ($r$) | $p$-value | Mean Bias vs Workstation |
+| Method | Pearson Correlation ($r$) | Spearman Rank ($\rho$) | $p$-value |
 |---|---|---|---|
-| **Adaptive Trimmed Gaussian (Native)** | **0.9526** | **$2.08 \times 10^{-5}$** | $+4.62\text{ mL}$ |
-| **GMM Bayes ($P \ge 0.5$)** | **0.9603** | **$1.09 \times 10^{-5}$** | $+5.18\text{ mL}$ |
-| **Conservative Fixed Window** | **0.9236** | **$1.52 \times 10^{-4}$** | $-0.84\text{ mL}$ |
+| **GMM Bayes ($P \ge 0.5$)** | **0.9584** | **0.9394** | **$1.24 \times 10^{-5}$** |
+| **Conservative Fixed Window ($[-190, -30]\text{ HU}$)** | **0.9463** | **0.9152** | **$3.40 \times 10^{-5}$** |
+| **Adaptive Trimmed Gaussian** | **0.9321** | **0.9152** | **$8.54 \times 10^{-5}$** |
 
 ---
 

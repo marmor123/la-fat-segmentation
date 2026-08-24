@@ -78,22 +78,23 @@ def run_benchmark_for_patient(
 
     print(f"[+] Using mask cache: {target_mask_dir}")
 
-    # 2. Resample Raw CT to 1.5mm Isotropic Reference Grid
-    resample_result = resample_to_isotropic(raw_ct_path, target_spacing_mm=1.5, is_label=False)
-    ct_array = resample_result.array # (Z, Y, X)
-    geo_1_5mm = resample_result.geometry
-    spacing = geo_1_5mm.spacing
-    voxel_vol_ml = voxel_volume_ml(spacing)
+    # 2. Ingest Raw CT (Native Resolution Master Grid)
+    raw_img = sitk.ReadImage(raw_ct_path)
+    raw_geo = GridGeometry.from_sitk_image(raw_img)
+    ct_array = sitk.GetArrayFromImage(raw_img).astype(np.float32)
+    spacing = raw_geo.spacing
+    voxel_vol_ml = raw_geo.voxel_volume_ml
+    print(f"[+] Native CT loaded: shape={ct_array.shape}, spacing={spacing} mm")
 
-    # 3. Load & Resample Canonical Masks onto Reference 1.5mm Grid
+    # 3. Load & Align Canonical Masks onto Native Reference Grid
     loaded_masks: Dict[str, np.ndarray] = {}
     for anchor in CANONICAL_ANCHORS:
         mask_path = resolve_ts_mask_path(target_mask_dir, patient_id, anchor)
         if mask_path and os.path.isfile(mask_path):
             mask_resample = resample_to_reference(
                 mask_path,
-                reference_or_path=ct_array,
-                reference_geometry=geo_1_5mm,
+                reference_or_path=raw_img,
+                reference_geometry=raw_geo,
                 is_label=True,
             )
             loaded_masks[anchor] = mask_resample.array.astype(bool)
@@ -110,8 +111,8 @@ def run_benchmark_for_patient(
     if peri_path and os.path.isfile(peri_path):
         peri_resample = resample_to_reference(
             peri_path,
-            reference_or_path=ct_array,
-            reference_geometry=geo_1_5mm,
+            reference_or_path=raw_img,
+            reference_geometry=raw_geo,
             is_label=True,
         )
         ts_peri_mask = peri_resample.array.astype(bool)
@@ -128,7 +129,7 @@ def run_benchmark_for_patient(
     thresh_result = compute_fat_threshold(
         ct_volume=ct_array,
         pericardium_mask=peri_result.mask,
-        geometry=geo_1_5mm,
+        geometry=raw_geo,
         config=thresh_cfg,
     )
 
@@ -149,7 +150,7 @@ def run_benchmark_for_patient(
         fat_hu_range=(thresh_result.hu_low, thresh_result.hu_high),
         anchor_masks=anchor_masks,
         config=part_cfg,
-        geometry=geo_1_5mm,
+        geometry=raw_geo,
     )
 
     # 8. Cleanup & Topology
@@ -167,7 +168,7 @@ def run_benchmark_for_patient(
         fat_mask=cons_fat_mask,
         anchor_masks=anchor_masks,
         config=part_cfg,
-        geometry=geo_1_5mm,
+        geometry=raw_geo,
     )
     cons_cleanup = cleanup_la_fat_mask(cons_part_result.la_fat_mask, config, spacing)
     la_fat_vol_conservative_ml = int(np.sum(cons_cleanup.cleaned_mask)) * voxel_vol_ml
@@ -180,7 +181,7 @@ def run_benchmark_for_patient(
         fat_mask=gmm_fat_mask,
         anchor_masks=anchor_masks,
         config=part_cfg,
-        geometry=geo_1_5mm,
+        geometry=raw_geo,
     )
     gmm_cleanup = cleanup_la_fat_mask(gmm_part_result.la_fat_mask, config, spacing)
     la_fat_vol_gmm_bayes_ml = int(np.sum(gmm_cleanup.cleaned_mask)) * voxel_vol_ml
@@ -194,9 +195,9 @@ def run_benchmark_for_patient(
     )
     if thresh_result.flags:
         flags.extend(thresh_result.flags)
-    high_flags = [f for f in flags if f.severity == "HIGH" or f.severity == "high"]
-    med_flags = [f for f in flags if f.severity == "MEDIUM" or f.severity == "medium"]
-    low_flags = [f for f in flags if f.severity == "LOW" or f.severity == "low"]
+    high_flags = [f for f in flags if str(f.severity).lower() == "high"]
+    med_flags = [f for f in flags if str(f.severity).lower() == "medium"]
+    low_flags = [f for f in flags if str(f.severity).lower() == "low"]
 
     print(f"[+] LA Fat (Adaptive): {la_fat_vol_adaptive_ml:.2f} mL vs Scanner Baseline: {meta['scanner_la_eat_ml']:.2f} mL")
     print(f"[+] LA Fat (GMM Bayes): {la_fat_vol_gmm_bayes_ml:.2f} mL (Window: [{gmm_low:.1f}, {gmm_high:.1f}] HU)")
@@ -207,61 +208,34 @@ def run_benchmark_for_patient(
     patient_out_dir = os.path.join(OUTPUT_DIR, patient_id)
     os.makedirs(patient_out_dir, exist_ok=True)
 
-    # 1.5mm mask
+    # Save Native Adaptive Mask directly
     nifti_io.save_nifti(
         cleaned_la_fat.astype(np.uint8),
-        os.path.join(patient_out_dir, "la_fat_mask.nii.gz"),
-        spacing=geo_1_5mm.spacing,
-        origin=geo_1_5mm.origin,
-        direction=geo_1_5mm.direction,
-    )
-
-    # Native resolution projection & save
-    raw_img = sitk.ReadImage(raw_ct_path)
-    raw_geo = GridGeometry.from_sitk_image(raw_img)
-
-    # Native Adaptive Mask
-    native_resample = resample_to_reference(
-        cleaned_la_fat.astype(np.uint8),
-        raw_img,
-        is_label=True,
-        moving_geometry=geo_1_5mm,
-        reference_geometry=raw_geo,
-    )
-    nifti_io.save_nifti(
-        native_resample.array.astype(np.uint8),
         os.path.join(patient_out_dir, "la_fat_final_native.nii.gz"),
         spacing=raw_geo.spacing,
         origin=raw_geo.origin,
         direction=raw_geo.direction,
     )
-
-    # Native Conservative Mask
-    native_cons_resample = resample_to_reference(
-        cons_cleanup.cleaned_mask.astype(np.uint8),
-        raw_img,
-        is_label=True,
-        moving_geometry=geo_1_5mm,
-        reference_geometry=raw_geo,
-    )
     nifti_io.save_nifti(
-        native_cons_resample.array.astype(np.uint8),
+        cleaned_la_fat.astype(np.uint8),
+        os.path.join(patient_out_dir, "la_fat_mask.nii.gz"),
+        spacing=raw_geo.spacing,
+        origin=raw_geo.origin,
+        direction=raw_geo.direction,
+    )
+
+    # Save Native Conservative Mask directly
+    nifti_io.save_nifti(
+        cons_cleanup.cleaned_mask.astype(np.uint8),
         os.path.join(patient_out_dir, "la_fat_conservative_native.nii.gz"),
         spacing=raw_geo.spacing,
         origin=raw_geo.origin,
         direction=raw_geo.direction,
     )
 
-    # Native GMM Bayes Mask
-    native_gmm_resample = resample_to_reference(
-        gmm_cleanup.cleaned_mask.astype(np.uint8),
-        raw_img,
-        is_label=True,
-        moving_geometry=geo_1_5mm,
-        reference_geometry=raw_geo,
-    )
+    # Save Native GMM Bayes Mask directly
     nifti_io.save_nifti(
-        native_gmm_resample.array.astype(np.uint8),
+        gmm_cleanup.cleaned_mask.astype(np.uint8),
         os.path.join(patient_out_dir, "la_fat_gmm_bayes_native.nii.gz"),
         spacing=raw_geo.spacing,
         origin=raw_geo.origin,
@@ -311,6 +285,7 @@ def run_benchmark_for_patient(
         anchor_masks=anchor_masks,
         partition_assignments=part_result.anchor_assignments,
         metrics=metrics_dict,
+        spacing=raw_geo.spacing,
     )
 
     return qa_record

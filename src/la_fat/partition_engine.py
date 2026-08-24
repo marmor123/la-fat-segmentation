@@ -342,10 +342,13 @@ def partition_fat(
     min_dist = np.full(shape, np.inf, dtype=np.float64)
     best_label = np.zeros(shape, dtype=np.int32)
 
+    # Invert (sx, sy, sz) to (sz, sy, sx) to match NumPy (z, y, x) array layout
+    sampling_zyx = (float(eff_spacing[2]), float(eff_spacing[1]), float(eff_spacing[0]))
+
     for anchor_name in valid_anchors:
         mask = anchor_masks[anchor_name].astype(bool)
-        # Direct exterior distance to solid mask
-        dist = distance_transform_edt(~mask, sampling=eff_spacing)
+        # Direct exterior distance to solid mask with correct anisotropic voxel dimensions
+        dist = distance_transform_edt(~mask, sampling=sampling_zyx)
         lbl = anchor_label_map[anchor_name]
 
         closer = dist < min_dist

@@ -4,13 +4,13 @@ Wires all processing stages into a cohesive, deep pure-function entry point:
 ``run_fat_extraction`` (and backward-compatible alias ``run_fat_extraction_pipeline``).
 
 Execution sequence:
-1. Resample raw CT to 1.5mm isotropic reference grid via ``image_ops``.
-2. Ingest & resample canonical anchor masks to reference geometry.
+1. Ingest raw CT scan into native 3D GridGeometry (512x512xZ).
+2. Ingest & align canonical anatomical masks to native CT geometry.
 3. Resolve pericardial envelope via ``pericardium_resolver``.
 4. Perform adaptive trimmed-Gaussian fat thresholding via ``thresholding``.
 5. Compute 3D multi-anchor solid Euclidean Distance Transform partition via ``partition_engine``.
 6. Filter disconnected fat islands via ``cleanup``.
-7. Export dual-grid radiomics masks (1.5mm isotropic & native 512x512 DICOM grid).
+7. Export native radiomics masks (Adaptive, Conservative, and GMM Bayes).
 8. Audit quality concerns via ``quality_flagger``.
 9. Generate zero-footprint standalone HTML5 QA Studio via ``cohort_qa_generator``.
 10. Return immutable, typed ``SegmentationResult``.
@@ -35,7 +35,6 @@ from la_fat.config import PipelineConfig
 from la_fat.image_ops import (
     GridGeometry,
     ResampleResult,
-    resample_to_isotropic,
     resample_to_reference,
 )
 from la_fat import nifti_io
@@ -91,6 +90,7 @@ class SegmentationResult:
     total_removed_volume_mm3: float = 0.0
     mask_1_5mm_path: Optional[str] = None
     mask_native_path: Optional[str] = None
+    mask_final_native_path: Optional[str] = None
     mask_conservative_native_path: Optional[str] = None
     mask_gmm_bayes_native_path: Optional[str] = None
     qa_report_path: Optional[str] = None
@@ -152,9 +152,11 @@ class SegmentationResult:
             ],
             "quality_flags_count_by_tier": self.quality_flags_count_by_tier,
             "islands_removed": self.islands_removed,
-            "total_removed_volume_mm3": self.total_removed_volume_mm3,
-            "mask_1_5mm_path": self.mask_1_5mm_path,
             "mask_native_path": self.mask_native_path,
+            "mask_final_native_path": self.mask_final_native_path,
+            "mask_conservative_native_path": self.mask_conservative_native_path,
+            "mask_gmm_bayes_native_path": self.mask_gmm_bayes_native_path,
+            "mask_1_5mm_path": self.mask_1_5mm_path,
             "qa_report_path": self.qa_report_path,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
@@ -292,28 +294,26 @@ def run_fat_extraction(
             return _build_empty_result(patient_id, start_time, errors, warnings)
         raw_ct_path = resolved_ct_path
 
-    # 3. Resample Raw CT to 1.5mm Isotropic Reference Grid
+    # 3. Ingest Raw CT (Native Resolution Master Grid)
     try:
-        ct_resample: ResampleResult = resample_to_isotropic(
-            raw_ct_path, target_spacing_mm=spacing_mm, is_label=False,
-        )
-        ct_array = ct_resample.array
-        geo_1_5mm = ct_resample.geometry
-        raw_geometry = ct_resample.original_geometry
-        spacing = geo_1_5mm.spacing
-        voxel_vol_ml = voxel_volume_ml(spacing)
+        raw_img = sitk.ReadImage(raw_ct_path)
+        ref_geometry = GridGeometry.from_sitk_image(raw_img)
+        raw_geometry = ref_geometry
+        ct_array = sitk.GetArrayFromImage(raw_img).astype(np.float32)
+        spacing = ref_geometry.spacing
+        voxel_vol_ml = ref_geometry.voxel_volume_ml
         logger.info(
-            "Resampled CT %s to isotropic %.1f mm (shape: %s)",
-            patient_id, spacing_mm, ct_array.shape,
+            "Loaded native CT %s (shape: %s, spacing: %s mm)",
+            patient_id, ct_array.shape, spacing,
         )
     except Exception as exc:
-        err = f"CT isotropic resampling failed: {exc}"
+        err = f"CT native ingestion failed: {exc}"
         logger.error(err)
         errors.append(err)
         return _build_empty_result(patient_id, start_time, errors, warnings)
 
-    # 4. Ingest & Resample TS Masks
-    loaded_masks = load_and_resample_masks(target_mask_dir, patient_id, geo_1_5mm)
+    # 4. Ingest & Align TS Masks to Native Grid
+    loaded_masks = load_and_resample_masks(target_mask_dir, patient_id, ref_geometry)
     if not loaded_masks:
         err = f"No anatomical masks found for {patient_id} in {target_mask_dir}"
         logger.error(err)
@@ -351,7 +351,7 @@ def run_fat_extraction(
     threshold_result: ThresholdResult = compute_fat_threshold(
         ct_volume=ct_array,
         pericardium_mask=pericardium_mask,
-        geometry=geo_1_5mm,
+        geometry=ref_geometry,
         config=thresh_cfg,
     )
     if threshold_result.is_fallback:
@@ -365,7 +365,7 @@ def run_fat_extraction(
             fat_hu_range=(threshold_result.hu_low, threshold_result.hu_high),
             anchor_masks=anchor_masks,
             config=cfg,
-            spacing=spacing,
+            geometry=ref_geometry,
         )
         if partition_result.excluded_anchors:
             warnings.append(f"Anchor(s) excluded: {', '.join(partition_result.excluded_anchors)}")
@@ -421,84 +421,56 @@ def run_fat_extraction(
 
     # 10. Tri-Track Radiomics Export
     os.makedirs(patient_output_dir, exist_ok=True)
-    mask_1_5mm_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_1.5mm.nii.gz")
-    legacy_mask_path = os.path.join(patient_output_dir, "la_fat_mask.nii.gz")
     mask_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_native.nii.gz")
     mask_final_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_final_native.nii.gz")
     mask_conservative_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_conservative_native.nii.gz")
     mask_gmm_bayes_native_path = os.path.join(patient_output_dir, f"{patient_id}_la_fat_gmm_bayes_native.nii.gz")
+    legacy_mask_path = os.path.join(patient_output_dir, "la_fat_mask.nii.gz")
+    mask_1_5mm_path = mask_final_native_path
 
     try:
-        # Save 1.5mm adaptive mask
+        # Save Native adaptive mask directly
         nifti_io.save_nifti(
             cleaned_la_fat_mask.astype(np.uint8),
-            mask_1_5mm_path,
-            spacing=geo_1_5mm.spacing,
-            origin=geo_1_5mm.origin,
-            direction=geo_1_5mm.direction,
+            mask_native_path,
+            spacing=ref_geometry.spacing,
+            origin=ref_geometry.origin,
+            direction=ref_geometry.direction,
         )
-        # Duplicate as la_fat_mask.nii.gz for legacy scripts
+        nifti_io.save_nifti(
+            cleaned_la_fat_mask.astype(np.uint8),
+            mask_final_native_path,
+            spacing=ref_geometry.spacing,
+            origin=ref_geometry.origin,
+            direction=ref_geometry.direction,
+        )
         nifti_io.save_nifti(
             cleaned_la_fat_mask.astype(np.uint8),
             legacy_mask_path,
-            spacing=geo_1_5mm.spacing,
-            origin=geo_1_5mm.origin,
-            direction=geo_1_5mm.direction,
+            spacing=ref_geometry.spacing,
+            origin=ref_geometry.origin,
+            direction=ref_geometry.direction,
         )
 
-        # Resample Adaptive mask back to native CT resolution (512x512)
-        native_resample = resample_to_reference(
-            cleaned_la_fat_mask.astype(np.uint8),
-            reference_or_path=raw_ct_path,
-            reference_geometry=raw_geometry,
-            is_label=True,
-        )
+        # Save Native Conservative mask directly
         nifti_io.save_nifti(
-            native_resample.array.astype(np.uint8),
-            mask_native_path,
-            spacing=raw_geometry.spacing,
-            origin=raw_geometry.origin,
-            direction=raw_geometry.direction,
-        )
-        nifti_io.save_nifti(
-            native_resample.array.astype(np.uint8),
-            mask_final_native_path,
-            spacing=raw_geometry.spacing,
-            origin=raw_geometry.origin,
-            direction=raw_geometry.direction,
-        )
-
-        # Resample Conservative mask to native CT resolution
-        native_cons_resample = resample_to_reference(
             la_conservative_mask.astype(np.uint8),
-            reference_or_path=raw_ct_path,
-            reference_geometry=raw_geometry,
-            is_label=True,
-        )
-        nifti_io.save_nifti(
-            native_cons_resample.array.astype(np.uint8),
             mask_conservative_native_path,
-            spacing=raw_geometry.spacing,
-            origin=raw_geometry.origin,
-            direction=raw_geometry.direction,
+            spacing=ref_geometry.spacing,
+            origin=ref_geometry.origin,
+            direction=ref_geometry.direction,
         )
 
-        # Resample GMM Bayes mask to native CT resolution
-        native_gmm_resample = resample_to_reference(
-            la_gmm_mask.astype(np.uint8),
-            reference_or_path=raw_ct_path,
-            reference_geometry=raw_geometry,
-            is_label=True,
-        )
+        # Save Native GMM Bayes mask directly
         nifti_io.save_nifti(
-            native_gmm_resample.array.astype(np.uint8),
+            la_gmm_mask.astype(np.uint8),
             mask_gmm_bayes_native_path,
-            spacing=raw_geometry.spacing,
-            origin=raw_geometry.origin,
-            direction=raw_geometry.direction,
+            spacing=ref_geometry.spacing,
+            origin=ref_geometry.origin,
+            direction=ref_geometry.direction,
         )
 
-        logger.info("Saved tri-track masks: Adaptive, Conservative, GMM Bayes for %s", patient_id)
+        logger.info("Saved tri-track native masks: Adaptive, Conservative, GMM Bayes for %s", patient_id)
     except Exception as exc:
         msg = f"Failed to export NIfTI masks: {exc}"
         warnings.append(msg)
@@ -559,6 +531,7 @@ def run_fat_extraction(
                 partition_assignments=partition_result.anchor_assignments,
                 la_fat_mask=cleaned_la_fat_mask,
                 metrics=qa_metrics,
+                spacing=ref_geometry.spacing,
             )
             qa_report_path = os.path.join(patient_output_dir, "qa_report.html")
             generate_cohort_qa_html({patient_id: qa_record}, qa_report_path)
@@ -602,6 +575,7 @@ def run_fat_extraction(
         total_removed_volume_mm3=cleanup_result.total_removed_volume_mm3,
         mask_1_5mm_path=mask_1_5mm_path,
         mask_native_path=mask_native_path,
+        mask_final_native_path=mask_final_native_path,
         mask_conservative_native_path=mask_conservative_native_path,
         mask_gmm_bayes_native_path=mask_gmm_bayes_native_path,
         qa_report_path=qa_report_path,
@@ -679,8 +653,11 @@ def _build_empty_result(
         quality_flags_count_by_tier={"high": 0, "medium": 0, "low": 0},
         islands_removed=0,
         total_removed_volume_mm3=0.0,
-        mask_1_5mm_path=None,
         mask_native_path=None,
+        mask_final_native_path=None,
+        mask_conservative_native_path=None,
+        mask_gmm_bayes_native_path=None,
+        mask_1_5mm_path=None,
         qa_report_path=None,
         qa_record=None,
         errors=errors,

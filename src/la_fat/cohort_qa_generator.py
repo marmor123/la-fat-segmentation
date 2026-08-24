@@ -43,6 +43,7 @@ def render_slice_layers(
     la_fat_mask: Optional[np.ndarray],
     slice_idx: int,
     plane: str = "axial",
+    spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> Dict[str, str]:
     """Render the base CT image and transparent overlay masks for a 2D slice."""
     def extract_slice(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
@@ -120,6 +121,25 @@ def render_slice_layers(
         pv_rgba[pv_mask] = [168, 85, 247, 200]
     img_pv = Image.fromarray(pv_rgba, mode="RGBA")
 
+    # Correct anisotropic slice display aspect ratio if non-square voxels
+    sx, sy, sz = float(spacing[0]), float(spacing[1]), float(spacing[2])
+    if plane == "coronal" and abs(sz - sx) > 1e-3:
+        target_h = int(round(h * (sz / sx)))
+        img_ct = img_ct.resize((w, target_h), Image.Resampling.BILINEAR)
+        img_peri = img_peri.resize((w, target_h), Image.Resampling.NEAREST)
+        img_anchors = img_anchors.resize((w, target_h), Image.Resampling.NEAREST)
+        img_partition = img_partition.resize((w, target_h), Image.Resampling.NEAREST)
+        img_la_fat = img_la_fat.resize((w, target_h), Image.Resampling.NEAREST)
+        img_pv = img_pv.resize((w, target_h), Image.Resampling.NEAREST)
+    elif plane == "sagittal" and abs(sz - sy) > 1e-3:
+        target_h = int(round(h * (sz / sy)))
+        img_ct = img_ct.resize((w, target_h), Image.Resampling.BILINEAR)
+        img_peri = img_peri.resize((w, target_h), Image.Resampling.NEAREST)
+        img_anchors = img_anchors.resize((w, target_h), Image.Resampling.NEAREST)
+        img_partition = img_partition.resize((w, target_h), Image.Resampling.NEAREST)
+        img_la_fat = img_la_fat.resize((w, target_h), Image.Resampling.NEAREST)
+        img_pv = img_pv.resize((w, target_h), Image.Resampling.NEAREST)
+
     return {
         "ct": _to_webp_b64(img_ct),
         "peri": _to_webp_b64(img_peri),
@@ -134,7 +154,7 @@ def extract_3d_meshes(
     la_fat_mask: Optional[np.ndarray],
     pericardium_mask: Optional[np.ndarray],
     anchor_masks: Optional[Dict[str, np.ndarray]],
-    spacing: tuple[float, float, float] = (1.5, 1.5, 1.5),
+    spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> Dict[str, Any]:
     """Extract high-resolution anti-aliased 3D surface meshes for WebGL 3D studio."""
     structures: Dict[str, np.ndarray] = {}
@@ -164,20 +184,27 @@ def extract_3d_meshes(
             all_centers.append(np.mean(coords, axis=0))
     center = np.mean(all_centers, axis=0) if all_centers else np.array([0.0, 0.0, 0.0])
 
+    sx, sy, sz = float(spacing[0]), float(spacing[1]), float(spacing[2])
     mesh_payload: Dict[str, Any] = {}
     for name, mask in structures.items():
         try:
             # Gentle anti-aliasing Gaussian filter to eliminate voxel stepping
             smooth_arr = gaussian_filter(mask.astype(float), sigma=0.7)
-            # High-resolution marching cubes at full grid resolution (step_size=1)
-            verts, faces, _, _ = marching_cubes(smooth_arr, level=0.5, step_size=1)
+            # Use step_size=2 on large native CT grids (>200 voxels) to optimize WebGL polygon count
+            step = 2 if max(mask.shape) > 200 else 1
+            verts, faces, _, _ = marching_cubes(smooth_arr, level=0.5, step_size=step)
             
-            # Center and scale to physical millimeters in (X, Superior-Y, Anterior-Z)
-            verts_centered = (verts - center) * [spacing[0], spacing[1], spacing[2]]
-            x = verts_centered[:, 2]
-            y = verts_centered[:, 0]  # Superior is Up (Y in Three.js)
-            z = -verts_centered[:, 1] # Anterior is Front (Z in Three.js)
-            reordered_verts = np.column_stack([x, y, z])
+            # verts has shape (N, 3): [Z_idx, Y_idx, X_idx]
+            # Center and scale to physical millimeters in (X, Y, Z)
+            z_mm = (verts[:, 0] - center[0]) * sz
+            y_mm = (verts[:, 1] - center[1]) * sy
+            x_mm = (verts[:, 2] - center[2]) * sx
+            
+            # Three.js Anatomical Coordinates:
+            # X: Patient Left (+) / Right (-)
+            # Y: Patient Superior (+) / Inferior (-) (Up)
+            # Z: Patient Posterior (-) / Anterior (+) (Front)
+            reordered_verts = np.column_stack([x_mm, z_mm, -y_mm])
 
             mesh_payload[name] = {
                 "v": np.round(reordered_verts, 1).flatten().tolist(),
@@ -197,6 +224,7 @@ def extract_patient_qa_record(
     anchor_masks: Optional[Dict[str, np.ndarray]],
     partition_assignments: Optional[np.ndarray],
     metrics: Dict[str, Any],
+    spacing: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> Dict[str, Any]:
     """Extract complete multi-planar slice series, metrics, and 3D surface meshes for a patient."""
     nz, ny, nx = ct_volume.shape
@@ -231,19 +259,19 @@ def extract_patient_qa_record(
     slices_axial = {}
     for z in axial_indices:
         slices_axial[str(z)] = render_slice_layers(
-            ct_volume, pericardium_mask, anchor_masks, partition_assignments, la_fat_mask, z, "axial"
+            ct_volume, pericardium_mask, anchor_masks, partition_assignments, la_fat_mask, z, "axial", spacing=spacing
         )
 
     slices_coronal = {}
     for y in coronal_indices:
         slices_coronal[str(y)] = render_slice_layers(
-            ct_volume, pericardium_mask, anchor_masks, partition_assignments, la_fat_mask, y, "coronal"
+            ct_volume, pericardium_mask, anchor_masks, partition_assignments, la_fat_mask, y, "coronal", spacing=spacing
         )
 
     slices_sagittal = {}
     for x in sagittal_indices:
         slices_sagittal[str(x)] = render_slice_layers(
-            ct_volume, pericardium_mask, anchor_masks, partition_assignments, la_fat_mask, x, "sagittal"
+            ct_volume, pericardium_mask, anchor_masks, partition_assignments, la_fat_mask, x, "sagittal", spacing=spacing
         )
 
     # Landmark slice indices: Apex, Mid-LV, Mid-LA, Mitral Plane, Aorta
@@ -259,8 +287,8 @@ def extract_patient_qa_record(
     metrics_copy = dict(metrics)
     metrics_copy["landmark_slices"] = landmark_slices
 
-    # Extract true 3D surface meshes
-    meshes_3d = extract_3d_meshes(la_fat_mask, pericardium_mask, anchor_masks)
+    # Extract true 3D surface meshes with exact physical spacing
+    meshes_3d = extract_3d_meshes(la_fat_mask, pericardium_mask, anchor_masks, spacing=spacing)
 
     return {
         "id": str(patient_id),

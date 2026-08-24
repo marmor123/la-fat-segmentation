@@ -100,8 +100,6 @@ def _print_cli_summary(result: SegmentationResult) -> None:
             add(f"    - Native GMM Bayes Mask:{result.mask_gmm_bayes_native_path}")
         if result.mask_conservative_native_path:
             add(f"    - Native Cons. Mask:    {result.mask_conservative_native_path}")
-        if result.mask_1_5mm_path:
-            add(f"    - 1.5mm Isotropic Mask: {result.mask_1_5mm_path}")
         if result.qa_report_path:
             add(f"    - QA PACS Studio HTML:  {result.qa_report_path}")
 
