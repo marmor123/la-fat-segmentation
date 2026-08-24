@@ -498,6 +498,10 @@ def run_fat_extraction(
 
     if generate_qa:
         try:
+            high_flags = [f for f in quality_flags if str(f.severity).lower() == "high"]
+            med_flags = [f for f in quality_flags if str(f.severity).lower() in ("med", "medium")]
+            low_flags = [f for f in quality_flags if str(f.severity).lower() == "low"]
+
             qa_metrics = {
                 "patient_id": patient_id,
                 "la_fat_volume_ml": la_fat_volume_adaptive_ml,
@@ -507,6 +511,19 @@ def run_fat_extraction(
                 "eat_conservative_volume_ml": total_eat_volume_conservative_ml,
                 "la_gmm_bayes_volume_ml": la_fat_volume_gmm_bayes_ml,
                 "eat_gmm_bayes_volume_ml": total_eat_volume_gmm_bayes_ml,
+                # UI and Cohort QA Viewer Aliases
+                "la_vol_adaptive": la_fat_volume_adaptive_ml,
+                "la_vol_std": la_fat_volume_conservative_ml,
+                "la_vol_gmm_bayes": la_fat_volume_gmm_bayes_ml,
+                "total_eat_vol": total_eat_volume_adaptive_ml,
+                "total_eat_std": total_eat_volume_conservative_ml,
+                "total_eat_gmm_bayes": total_eat_volume_gmm_bayes_ml,
+                "fitted_mu_hu": threshold_result.fitted_mu,
+                "fitted_sigma_hu": threshold_result.fitted_sigma,
+                "high_flags": len(high_flags),
+                "med_flags": len(med_flags),
+                "low_flags": len(low_flags),
+                "primary_component_purity": partition_result.metrics.primary_component_fraction if partition_result and partition_result.metrics else 1.0,
                 "gaussian_fit": {
                     "success": not threshold_result.is_fallback,
                     "mu": threshold_result.fitted_mu,

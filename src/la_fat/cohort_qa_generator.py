@@ -1319,15 +1319,18 @@ function initApp() {{
   Object.keys(cohortData).forEach(pid => {{
     const opt = document.createElement('option');
     opt.value = pid;
-    opt.textContent = `Patient ${{pid}} (${{cohortData[pid].metrics.age || '?'}}y, ${{cohortData[pid].metrics.sex || '?'}})`;
+    const pMeta = (cohortData[pid] && cohortData[pid].metrics) ? cohortData[pid].metrics : {{}};
+    opt.textContent = `Patient ${{pid}} (${{pMeta.age || '?'}}y, ${{pMeta.sex || '?'}})`;
     selectEl.appendChild(opt);
   }});
 
   if (cohortData[currentPatientId]) {{
     selectEl.value = currentPatientId;
-    currentAxialSlice = cohortData[currentPatientId].default_axial;
-    currentCoronalSlice = Math.floor((cohortData[currentPatientId].coronal_range[0] + cohortData[currentPatientId].coronal_range[1]) / 2);
-    currentSagittalSlice = Math.floor((cohortData[currentPatientId].sagittal_range[0] + cohortData[currentPatientId].sagittal_range[1]) / 2);
+    currentAxialSlice = cohortData[currentPatientId].default_axial || 0;
+    const corRange = cohortData[currentPatientId].coronal_range || [0, 0];
+    const sagRange = cohortData[currentPatientId].sagittal_range || [0, 0];
+    currentCoronalSlice = Math.floor((corRange[0] + corRange[1]) / 2);
+    currentSagittalSlice = Math.floor((sagRange[0] + sagRange[1]) / 2);
   }}
 
   initCurtainSlider();
@@ -1353,8 +1356,9 @@ function setVariantById(tabId) {{
 function selectPatient(pid) {{
   if (!cohortData[pid]) return;
   currentPatientId = pid;
-  document.getElementById('patient-select').value = pid;
-  currentAxialSlice = cohortData[pid].default_axial;
+  const selectEl = document.getElementById('patient-select');
+  if (selectEl) selectEl.value = pid;
+  currentAxialSlice = cohortData[pid].default_axial || 0;
   updatePatientView();
   if (isThreeInitialized) {{
     loadPatient3DMeshes();
@@ -1364,97 +1368,143 @@ function selectPatient(pid) {{
 function updatePatientView() {{
   const p = cohortData[currentPatientId];
   if (!p) return;
+  const m = p.metrics || {{}};
+
+  const laVolAdaptive = m.la_vol_adaptive ?? m.la_fat_volume_ml ?? 0.0;
+  const laVolStd = m.la_vol_std ?? m.la_conservative_volume_ml ?? 0.0;
+  const highFlags = m.high_flags ?? ((m.quality_flags || []).filter(f => (f.severity || '').toLowerCase() === 'high').length);
+  const medFlags = m.med_flags ?? ((m.quality_flags || []).filter(f => ['med', 'medium'].includes((f.severity || '').toLowerCase())).length);
+  const fittedMu = m.fitted_mu_hu ?? (m.gaussian_fit ? m.gaussian_fit.mu : null);
+  const fittedSigma = m.fitted_sigma_hu ?? (m.gaussian_fit ? m.gaussian_fit.sigma : null);
+  const purity = m.primary_component_purity ?? 1.0;
   
   // Header stats
-  document.getElementById('stat-la-vol').textContent = `${{p.metrics.la_vol_adaptive.toFixed(1)}} mL`;
-  document.getElementById('stat-std-vol').textContent = `${{p.metrics.scanner_la_eat_ml ? p.metrics.scanner_la_eat_ml.toFixed(1) : p.metrics.la_vol_std.toFixed(1)}} mL`;
+  const statLa = document.getElementById('stat-la-vol');
+  if (statLa) statLa.textContent = `${{Number(laVolAdaptive).toFixed(1)}} mL`;
+  const statStd = document.getElementById('stat-std-vol');
+  if (statStd) statStd.textContent = `${{m.scanner_la_eat_ml ? Number(m.scanner_la_eat_ml).toFixed(1) : Number(laVolStd).toFixed(1)}} mL`;
   
   const badgeEl = document.getElementById('stat-badge');
-  if (p.metrics.high_flags > 0) {{
-    badgeEl.textContent = 'HIGH CONCERN';
-    badgeEl.className = 'badge badge-fail';
-  }} else if (p.metrics.med_flags > 0) {{
-    badgeEl.textContent = 'REVIEW';
-    badgeEl.className = 'badge badge-warn';
-  }} else {{
-    badgeEl.textContent = 'PASSED';
-    badgeEl.className = 'badge badge-pass';
+  if (badgeEl) {{
+    if (highFlags > 0) {{
+      badgeEl.textContent = 'HIGH CONCERN';
+      badgeEl.className = 'badge badge-fail';
+    }} else if (medFlags > 0) {{
+      badgeEl.textContent = 'REVIEW';
+      badgeEl.className = 'badge badge-warn';
+    }} else {{
+      badgeEl.textContent = 'PASSED';
+      badgeEl.className = 'badge badge-pass';
+    }}
   }}
 
   // HUD
-  document.getElementById('hud-patient').textContent = p.id;
-  document.getElementById('hud-la-vol').textContent = `${{p.metrics.la_vol_adaptive.toFixed(1)}} mL`;
+  const hudP = document.getElementById('hud-patient');
+  if (hudP) hudP.textContent = p.id;
+  const hudLa = document.getElementById('hud-la-vol');
+  if (hudLa) hudLa.textContent = `${{Number(laVolAdaptive).toFixed(1)}} mL`;
   
   // Ranges
-  const minZ = p.axial_range[0], maxZ = p.axial_range[1];
+  const minZ = (p.axial_range && p.axial_range[0] !== undefined) ? p.axial_range[0] : 0;
+  const maxZ = (p.axial_range && p.axial_range[1] !== undefined) ? p.axial_range[1] : 0;
   currentAxialSlice = Math.max(minZ, Math.min(maxZ, currentAxialSlice));
   
-  const minY = p.coronal_range[0], maxY = p.coronal_range[1];
+  const minY = (p.coronal_range && p.coronal_range[0] !== undefined) ? p.coronal_range[0] : 0;
+  const maxY = (p.coronal_range && p.coronal_range[1] !== undefined) ? p.coronal_range[1] : 0;
   currentCoronalSlice = Math.max(minY, Math.min(maxY, currentCoronalSlice));
   
-  const minX = p.sagittal_range[0], maxX = p.sagittal_range[1];
+  const minX = (p.sagittal_range && p.sagittal_range[0] !== undefined) ? p.sagittal_range[0] : 0;
+  const maxX = (p.sagittal_range && p.sagittal_range[1] !== undefined) ? p.sagittal_range[1] : 0;
   currentSagittalSlice = Math.max(minX, Math.min(maxX, currentSagittalSlice));
   
   // Sliders config
   const sliderA = document.getElementById('slice-slider-a');
-  sliderA.min = minZ; sliderA.max = maxZ; sliderA.value = currentAxialSlice;
-  document.getElementById('slice-num-a').textContent = currentAxialSlice;
-  document.getElementById('hud-z').textContent = currentAxialSlice;
-  document.getElementById('hud-z-b').textContent = `${{currentAxialSlice}} / ${{maxZ}}`;
+  if (sliderA) {{
+    sliderA.min = minZ; sliderA.max = maxZ; sliderA.value = currentAxialSlice;
+  }}
+  const sliceNumA = document.getElementById('slice-num-a');
+  if (sliceNumA) sliceNumA.textContent = currentAxialSlice;
+  const hudZ = document.getElementById('hud-z');
+  if (hudZ) hudZ.textContent = currentAxialSlice;
+  const hudZB = document.getElementById('hud-z-b');
+  if (hudZB) hudZB.textContent = `${{currentAxialSlice}} / ${{maxZ}}`;
 
   const sliderCor = document.getElementById('slider-coronal');
-  sliderCor.min = minY; sliderCor.max = maxY; sliderCor.value = currentCoronalSlice;
-  document.getElementById('coronal-num').textContent = currentCoronalSlice;
+  if (sliderCor) {{
+    sliderCor.min = minY; sliderCor.max = maxY; sliderCor.value = currentCoronalSlice;
+  }}
+  const coronalNum = document.getElementById('coronal-num');
+  if (coronalNum) coronalNum.textContent = currentCoronalSlice;
 
   const sliderSag = document.getElementById('slider-sagittal');
-  sliderSag.min = minX; sliderSag.max = maxX; sliderSag.value = currentSagittalSlice;
-  document.getElementById('sagittal-num').textContent = currentSagittalSlice;
+  if (sliderSag) {{
+    sliderSag.min = minX; sliderSag.max = maxX; sliderSag.value = currentSagittalSlice;
+  }}
+  const sagittalNum = document.getElementById('sagittal-num');
+  if (sagittalNum) sagittalNum.textContent = currentSagittalSlice;
 
   // Render Slices
   renderActiveSlices();
 
   // Variant B Sidebar
-  document.getElementById('b-la-vol').textContent = p.metrics.la_vol_adaptive.toFixed(1);
-  document.getElementById('b-scanner-vol').textContent = p.metrics.scanner_la_eat_ml ? p.metrics.scanner_la_eat_ml.toFixed(1) : '--';
-  document.getElementById('b-scanner-delta').textContent = p.metrics.delta_la_adaptive_pct ? `Δ vs Scanner: ${{p.metrics.delta_la_adaptive_pct.toFixed(1)}}% (${{p.metrics.delta_la_adaptive_ml.toFixed(2)}} mL)` : 'Scanner ref not available';
+  const bLaVol = document.getElementById('b-la-vol');
+  if (bLaVol) bLaVol.textContent = Number(laVolAdaptive).toFixed(1);
+  const bScannerVol = document.getElementById('b-scanner-vol');
+  if (bScannerVol) bScannerVol.textContent = m.scanner_la_eat_ml ? Number(m.scanner_la_eat_ml).toFixed(1) : '--';
+  const bScannerDelta = document.getElementById('b-scanner-delta');
+  if (bScannerDelta) {{
+    bScannerDelta.textContent = m.delta_la_adaptive_pct ? `Δ vs Scanner: ${{Number(m.delta_la_adaptive_pct).toFixed(1)}}% (${{Number(m.delta_la_adaptive_ml).toFixed(2)}} mL)` : (m.scanner_la_eat_ml ? `Scanner ref: ${{Number(m.scanner_la_eat_ml).toFixed(1)}} mL` : 'Scanner ref not available');
+  }}
 
-  document.getElementById('b-gauss-fit').textContent = p.metrics.fitted_mu_hu ? `μ = ${{p.metrics.fitted_mu_hu.toFixed(1)}} HU, σ = ${{p.metrics.fitted_sigma_hu.toFixed(1)}} HU` : 'Fallback window used';
-  document.getElementById('b-gauss-win').textContent = p.metrics.fitted_mu_hu ? `[${{(p.metrics.fitted_mu_hu - 2*p.metrics.fitted_sigma_hu).toFixed(1)}}, 0.0] HU` : '[-190.0, -30.0] HU';
+  const bGaussFit = document.getElementById('b-gauss-fit');
+  if (bGaussFit) {{
+    bGaussFit.textContent = (fittedMu !== null && fittedSigma !== null) ? `μ = ${{Number(fittedMu).toFixed(1)}} HU, σ = ${{Number(fittedSigma).toFixed(1)}} HU` : 'Fallback window used';
+  }}
+  const bGaussWin = document.getElementById('b-gauss-win');
+  if (bGaussWin) {{
+    bGaussWin.textContent = (fittedMu !== null && fittedSigma !== null) ? `[${{(Number(fittedMu) - 2*Number(fittedSigma)).toFixed(1)}}, 0.0] HU` : '[-190.0, -30.0] HU';
+  }}
 
   // Checklist
-  document.getElementById('b-concern-list').innerHTML = `
-    <div style="display:flex; justify-content:space-between;">
-      <span>Pericardium Sac Hull:</span>
-      <span style="color:#4ade80">🟢 TS Direct Solid</span>
-    </div>
-    <div style="display:flex; justify-content:space-between;">
-      <span>Gaussian HU Fit:</span>
-      <span style="color:${{p.metrics.fitted_mu_hu ? '#4ade80' : '#fbbf24'}}">${{p.metrics.fitted_mu_hu ? '🟢 Converged' : '🟡 Fallback'}}</span>
-    </div>
-    <div style="display:flex; justify-content:space-between;">
-      <span>Topological Purity:</span>
-      <span style="color:${{p.metrics.primary_component_purity > 0.7 ? '#4ade80' : '#fbbf24'}}">${{(p.metrics.primary_component_purity * 100).toFixed(1)}}%</span>
-    </div>
-  `;
+  const bConcernList = document.getElementById('b-concern-list');
+  if (bConcernList) {{
+    bConcernList.innerHTML = `
+      <div style="display:flex; justify-content:space-between;">
+        <span>Pericardium Sac Hull:</span>
+        <span style="color:#4ade80">🟢 TS Direct Solid</span>
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <span>Gaussian HU Fit:</span>
+        <span style="color:${{fittedMu !== null ? '#4ade80' : '#fbbf24'}}">${{fittedMu !== null ? '🟢 Converged' : '🟡 Fallback'}}</span>
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <span>Topological Purity:</span>
+        <span style="color:${{purity > 0.7 ? '#4ade80' : '#fbbf24'}}">${{(purity * 100).toFixed(1)}}%</span>
+      </div>
+    `;
+  }}
 
   // Landmark Filmstrip
   const filmstripEl = document.getElementById('filmstrip-b');
-  filmstripEl.innerHTML = '';
-  const labels = ["Apex", "Mid-LV", "Mid-LA", "Mitral", "Aorta"];
-  (p.metrics.landmark_slices || []).forEach((lz, idx) => {{
-    const lzClamped = Math.max(minZ, Math.min(maxZ, lz));
-    const sliceObj = getClosestSlice(p.slices.axial, lzClamped);
-    if (sliceObj) {{
-      const div = document.createElement('div');
-      div.className = `filmstrip-thumb ${{lzClamped === currentAxialSlice ? 'active' : ''}}`;
-      div.innerHTML = `<img src="${{sliceObj.la_fat}}"><div class="filmstrip-label">${{labels[idx] || 'Slice'}} (Z:${{lzClamped}})</div>`;
-      div.onclick = () => {{
-        currentAxialSlice = lzClamped;
-        updatePatientView();
-      }};
-      filmstripEl.appendChild(div);
-    }}
-  }});
+  if (filmstripEl) {{
+    filmstripEl.innerHTML = '';
+    const labels = ["Apex", "Mid-LV", "Mid-LA", "Mitral", "Aorta"];
+    const landmarkList = m.landmark_slices || [];
+    landmarkList.forEach((lz, idx) => {{
+      const lzClamped = Math.max(minZ, Math.min(maxZ, lz));
+      const sliceObj = getClosestSlice(p.slices ? p.slices.axial : null, lzClamped);
+      if (sliceObj && sliceObj.la_fat) {{
+        const div = document.createElement('div');
+        div.className = `filmstrip-thumb ${{lzClamped === currentAxialSlice ? 'active' : ''}}`;
+        div.innerHTML = `<img src="${{sliceObj.la_fat}}"><div class="filmstrip-label">${{labels[idx] || 'Slice'}} (Z:${{lzClamped}})</div>`;
+        div.onclick = () => {{
+          currentAxialSlice = lzClamped;
+          updatePatientView();
+        }};
+        filmstripEl.appendChild(div);
+      }}
+    }});
+  }}
 
   renderCohortTable();
 }}
@@ -1469,73 +1519,84 @@ function getClosestSlice(sliceDict, targetIdx) {{
 
 function renderActiveSlices() {{
   const p = cohortData[currentPatientId];
-  if (!p) return;
+  if (!p || !p.slices) return;
 
   const axObj = getClosestSlice(p.slices.axial, currentAxialSlice);
   if (axObj) {{
-    document.getElementById('img-ct-a').src = axObj.ct;
-    document.getElementById('img-peri-a').src = axObj.peri;
-    document.getElementById('img-anchors-a').src = axObj.anchors;
-    document.getElementById('img-partition-a').src = axObj.partition;
-    document.getElementById('img-la-fat-a').src = axObj.la_fat;
-    document.getElementById('img-pv-a').src = axObj.pv_zone;
+    const setSrc = (id, src) => {{ const el = document.getElementById(id); if (el && src) el.src = src; }};
+    setSrc('img-ct-a', axObj.ct);
+    setSrc('img-peri-a', axObj.peri);
+    setSrc('img-anchors-a', axObj.anchors);
+    setSrc('img-partition-a', axObj.partition);
+    setSrc('img-la-fat-a', axObj.la_fat);
+    setSrc('img-pv-a', axObj.pv_zone);
 
-    document.getElementById('img-ct-b').src = axObj.ct;
-    document.getElementById('img-peri-b').src = axObj.peri;
-    document.getElementById('img-la-fat-b').src = axObj.la_fat;
-    document.getElementById('img-pv-b').src = axObj.pv_zone;
+    setSrc('img-ct-b', axObj.ct);
+    setSrc('img-peri-b', axObj.peri);
+    setSrc('img-la-fat-b', axObj.la_fat);
+    setSrc('img-pv-b', axObj.pv_zone);
   }}
 
   const corObj = getClosestSlice(p.slices.coronal, currentCoronalSlice);
   if (corObj) {{
-    document.getElementById('img-coronal-a').src = corObj.ct;
+    const el = document.getElementById('img-coronal-a');
+    if (el && corObj.ct) el.src = corObj.ct;
   }}
 
   const sagObj = getClosestSlice(p.slices.sagittal, currentSagittalSlice);
   if (sagObj) {{
-    document.getElementById('img-sagittal-a').src = sagObj.ct;
+    const el = document.getElementById('img-sagittal-a');
+    if (el && sagObj.ct) el.src = sagObj.ct;
   }}
 }}
 
 function onAxialSlider(val) {{
   currentAxialSlice = parseInt(val, 10);
-  document.getElementById('slice-num-a').textContent = currentAxialSlice;
-  document.getElementById('hud-z').textContent = currentAxialSlice;
-  document.getElementById('hud-z-b').textContent = currentAxialSlice;
+  const el1 = document.getElementById('slice-num-a'); if (el1) el1.textContent = currentAxialSlice;
+  const el2 = document.getElementById('hud-z'); if (el2) el2.textContent = currentAxialSlice;
+  const el3 = document.getElementById('hud-z-b'); if (el3) el3.textContent = currentAxialSlice;
   renderActiveSlices();
 }}
 
 function onCoronalSlider(val) {{
   currentCoronalSlice = parseInt(val, 10);
-  document.getElementById('coronal-num').textContent = currentCoronalSlice;
+  const el = document.getElementById('coronal-num'); if (el) el.textContent = currentCoronalSlice;
   renderActiveSlices();
 }}
 
 function onSagittalSlider(val) {{
   currentSagittalSlice = parseInt(val, 10);
-  document.getElementById('sagittal-num').textContent = currentSagittalSlice;
+  const el = document.getElementById('sagittal-num'); if (el) el.textContent = currentSagittalSlice;
   renderActiveSlices();
 }}
 
 function updateLayerVisibility() {{
-  document.getElementById('img-ct-a').style.display = document.getElementById('layer-ct').checked ? 'block' : 'none';
-  document.getElementById('img-peri-a').style.display = document.getElementById('layer-peri').checked ? 'block' : 'none';
-  document.getElementById('img-anchors-a').style.display = document.getElementById('layer-anchors').checked ? 'block' : 'none';
-  document.getElementById('img-partition-a').style.display = document.getElementById('layer-partition').checked ? 'block' : 'none';
-  document.getElementById('img-la-fat-a').style.display = document.getElementById('layer-la-fat').checked ? 'block' : 'none';
-  document.getElementById('img-pv-a').style.display = document.getElementById('layer-pv').checked ? 'block' : 'none';
+  const updateEl = (id, checkId) => {{
+    const el = document.getElementById(id);
+    const cb = document.getElementById(checkId);
+    if (el && cb) el.style.display = cb.checked ? 'block' : 'none';
+  }};
+  updateEl('img-ct-a', 'layer-ct');
+  updateEl('img-peri-a', 'layer-peri');
+  updateEl('img-anchors-a', 'layer-anchors');
+  updateEl('img-partition-a', 'layer-partition');
+  updateEl('img-la-fat-a', 'layer-la-fat');
+  updateEl('img-pv-a', 'layer-pv');
 }}
 
 function toggleAllLayers() {{
-  const target = !document.getElementById('layer-partition').checked;
+  const cbPart = document.getElementById('layer-partition');
+  const target = cbPart ? !cbPart.checked : true;
   ['layer-ct', 'layer-peri', 'layer-anchors', 'layer-partition', 'layer-la-fat', 'layer-pv'].forEach(id => {{
-    document.getElementById(id).checked = target;
+    const cb = document.getElementById(id);
+    if (cb) cb.checked = target;
   }});
   updateLayerVisibility();
 }}
 
 function renderCohortTable() {{
   const tbody = document.getElementById('cohort-tbody');
+  if (!tbody) return;
   tbody.innerHTML = '';
   
   Object.values(cohortData).forEach(p => {{
@@ -1543,15 +1604,23 @@ function renderCohortTable() {{
     if (p.id === currentPatientId) tr.className = 'active-patient';
     tr.onclick = () => selectPatient(p.id);
 
-    const m = p.metrics;
-    const scannerLA = m.scanner_la_eat_ml ? m.scanner_la_eat_ml.toFixed(1) : '--';
-    const pipeLA = m.la_vol_adaptive.toFixed(1);
-    const pipeStd = m.la_vol_std ? m.la_vol_std.toFixed(1) : '--';
-    const deltaPct = m.delta_la_adaptive_pct ? `${{m.delta_la_adaptive_pct > 0 ? '+' : ''}}${{m.delta_la_adaptive_pct.toFixed(1)}}%` : '--';
-    const totalEAT = m.total_eat_vol ? m.total_eat_vol.toFixed(1) : '--';
-    const gaussStr = m.fitted_mu_hu ? `${{m.fitted_mu_hu.toFixed(0)}} ± ${{m.fitted_sigma_hu.toFixed(0)}} HU` : 'Fallback';
+    const m = p.metrics || {{}};
+    const laVolAdaptive = m.la_vol_adaptive ?? m.la_fat_volume_ml ?? 0.0;
+    const laVolStd = m.la_vol_std ?? m.la_conservative_volume_ml ?? null;
+    const totalEAT = m.total_eat_vol ?? m.total_eat_volume_ml ?? null;
+    const highFlags = m.high_flags ?? ((m.quality_flags || []).filter(f => (f.severity || '').toLowerCase() === 'high').length);
+    const medFlags = m.med_flags ?? ((m.quality_flags || []).filter(f => ['med', 'medium'].includes((f.severity || '').toLowerCase())).length);
+    const fittedMu = m.fitted_mu_hu ?? (m.gaussian_fit ? m.gaussian_fit.mu : null);
+    const fittedSigma = m.fitted_sigma_hu ?? (m.gaussian_fit ? m.gaussian_fit.sigma : null);
 
-    const statusBadge = (m.high_flags > 0) ? '<span class="badge badge-fail">Concern</span>' : (m.med_flags > 0 ? '<span class="badge badge-warn">Review</span>' : '<span class="badge badge-pass">Passed</span>');
+    const scannerLA = m.scanner_la_eat_ml ? Number(m.scanner_la_eat_ml).toFixed(1) : '--';
+    const pipeLA = Number(laVolAdaptive).toFixed(1);
+    const pipeStd = (laVolStd !== null && laVolStd !== undefined) ? Number(laVolStd).toFixed(1) : '--';
+    const deltaPct = m.delta_la_adaptive_pct ? `${{Number(m.delta_la_adaptive_pct) > 0 ? '+' : ''}}${{Number(m.delta_la_adaptive_pct).toFixed(1)}}%` : '--';
+    const totalEATStr = (totalEAT !== null && totalEAT !== undefined) ? Number(totalEAT).toFixed(1) : '--';
+    const gaussStr = (fittedMu !== null && fittedSigma !== null) ? `${{Number(fittedMu).toFixed(0)}} ± ${{Number(fittedSigma).toFixed(0)}} HU` : 'Fallback';
+
+    const statusBadge = (highFlags > 0) ? '<span class="badge badge-fail">Concern</span>' : (medFlags > 0 ? '<span class="badge badge-warn">Review</span>' : '<span class="badge badge-pass">Passed</span>');
 
     tr.innerHTML = `
       <td><strong>${{p.id}}</strong></td>
@@ -1560,7 +1629,7 @@ function renderCohortTable() {{
       <td><strong style="color:var(--accent-gold);">${{pipeLA}}</strong></td>
       <td>${{pipeStd}}</td>
       <td style="color:${{m.delta_la_adaptive_pct && Math.abs(m.delta_la_adaptive_pct) < 15 ? '#4ade80' : '#fbbf24'}};">${{deltaPct}}</td>
-      <td>${{totalEAT}}</td>
+      <td>${{totalEATStr}}</td>
       <td>${{gaussStr}}</td>
       <td>${{statusBadge}}</td>
     `;
@@ -1627,6 +1696,14 @@ function initCurtainSlider() {{
 // Real 3D WebGL Three.js Engine
 // =========================================================================
 function init3DStudio() {{
+  if (typeof THREE === 'undefined') {{
+    const container = document.getElementById('webgl-container');
+    if (container) {{
+      container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:14px;padding:20px;text-align:center;">Interactive 3D WebGL requires internet access to load Three.js from CDN. When online, 3D surface meshes render automatically.</div>';
+    }}
+    return;
+  }}
+
   if (isThreeInitialized) {{
     on3DResize();
     return;
@@ -1689,7 +1766,7 @@ function on3DResize() {{
 }}
 
 function loadPatient3DMeshes() {{
-  if (!isThreeInitialized) return;
+  if (!isThreeInitialized || typeof THREE === 'undefined') return;
   const p = cohortData[currentPatientId];
   if (!p || !p.meshes) return;
 
